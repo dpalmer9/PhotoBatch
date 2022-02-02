@@ -197,7 +197,7 @@ class Photometry_Data:
         
         if filter_event == True:
             filter_event_abet = filter_event_abet[~filter_event_abet.isin(exclusion_list)]
-            filter_event_abet = filter_event_abet.dropna(subset=['Item_Name'])
+            
             
             filter_before = int(filter_before)
             if filter_event_id in condition_event_names:
@@ -782,6 +782,10 @@ class Photometry_Data:
             if center_method == 'mean':
                 z_mean = full_iti_deltaf.mean()
                 z_sd = full_iti_deltaf.std()
+            elif center_method == 'median':
+                z_mean = full_iti_deltaf.median()
+                z_sd = full_iti_deltaf.std()
+            
             
             for index, row in self.abet_time_list.iterrows():
                 try:
@@ -1060,6 +1064,10 @@ for row_index, row in file_csv.iterrows():
         continue
     analyzer.doric_process(filter_frequency=filter_frequency)
     
+    raw_processed = False
+    
+    
+    
     
     for row_index2, row2 in event_csv.iterrows():
         null_check = row2.isnull()
@@ -1139,8 +1147,10 @@ for row_index, row in file_csv.iterrows():
             analyzer.write_data('SimpleF',filename_override=file_dir)
         if run_timedf == 1:
             analyzer.write_data('TimedF',filename_override=file_dir)
-        if run_raw == 1:
-            analyzer.write_data('Raw',filename_override=file_dir)
+        if run_raw == 1 and raw_processed == False:
+            file_path_raw = output_path + animal_id + '-' + schedule + '-' + date
+            analyzer.write_data('Full',filename_override=file_path_raw)
+            raw_processed = True
             
             
         
