@@ -197,7 +197,7 @@ class Photometry_Data:
         
         if filter_event == True:
             filter_event_abet = filter_event_abet[~filter_event_abet.isin(exclusion_list)]
-            
+            filter_event_abet = filter_event_abet.dropna(subset=['Item_Name'])
             
             filter_before = int(filter_before)
             if filter_event_id in condition_event_names:
