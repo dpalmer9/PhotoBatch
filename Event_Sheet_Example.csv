@@ -1,0 +1,22 @@
+event_type,event_name,event_group,event_arg,num_filter,filter_type,filter_name,filter_group,filter_arg,filter_prior,filter_type2,filter_name2,filter_group2,filter_arg2,filter_prior2
+Condition Event,Display Image,4,,2,Condition Event,Hit,6,,0,Variable Event,Current_Image,3,1,1
+Condition Event,Display Image,4,,2,Condition Event,Correct Rejection,6,,0,Variable Event,Current_Image,3,4,1
+Condition Event,Display Image,4,,2,Condition Event,Missed Hit,6,,0,Variable Event,Current_Image,3,1,1
+Condition Event,Display Image,4,,2,Condition Event,Mistake,6,,0,Variable Event,Current_Image,3,4,1
+Condition Event,Display Image,4,,2,Condition Event,Hit,6,,0,Variable Event,Current_Image,3,2,1
+Condition Event,Display Image,4,,2,Condition Event,Correct Rejection,6,,0,Variable Event,Current_Image,3,5,1
+Condition Event,Display Image,4,,2,Condition Event,Missed Hit,6,,0,Variable Event,Current_Image,3,2,1
+Condition Event,Display Image,4,,2,Condition Event,Mistake,6,,0,Variable Event,Current_Image,3,5,1
+Condition Event,Display Image,4,,2,Condition Event,Hit,6,,0,Variable Event,Current_Image,3,3,1
+Condition Event,Display Image,4,,2,Condition Event,Correct Rejection,6,,0,Variable Event,Current_Image,3,6,1
+Condition Event,Display Image,4,,2,Condition Event,Missed Hit,6,,0,Variable Event,Current_Image,3,3,1
+Condition Event,Display Image,4,,2,Condition Event,Mistake,6,,0,Variable Event,Current_Image,3,6,1
+Condition Event,Reward Collected Start ITI,7,,1,Variable Event,Current_Image,3,1,1,,,,,
+Condition Event,Reward Collected Start ITI,7,,1,Variable Event,Current_Image,3,2,1,,,,,
+Condition Event,Reward Collected Start ITI,7,,1,Variable Event,Current_Image,3,3,1,,,,,
+Condition Event,Hit,6,,1,Variable Event,Current_Image,3,1,1,,,,,
+Condition Event,Hit,6,,1,Variable Event,Current_Image,3,2,1,,,,,
+Condition Event,Hit,6,,1,Variable Event,Current_Image,3,3,1,,,,,
+Condition Event,Mistake,6,,1,Variable Event,Current_Image,3,4,1,,,,,
+Condition Event,Mistake,6,,1,Variable Event,Current_Image,3,5,1,,,,,
+Condition Event,Mistake,6,,1,Variable Event,Current_Image,3,6,1,,,,,

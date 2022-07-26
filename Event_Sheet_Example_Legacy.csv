@@ -1,0 +1,11 @@
+event_type,event_name,event_group,event_arg,filter_type,filter_name,filter_group,filter_arg,filter_prior
+Condition Event,Display Image,4,,,,,,
+Condition Event,Hit,6,,,,,,
+Condition Event,Missed Hit,6,,,,,,
+Condition Event,Mistake,6,,,,,,
+Condition Event,Correct Rejection,6,,,,,,
+Condition Event,Reward Collected Start ITI,7,,,,,,
+Condition Event,Display Image,4,,Condition Event,Hit,6,,0
+Condition Event,Display Image,4,,Condition Event,Correct Rejection,6,,0
+Condition Event,Display Image,4,,Condition Event,Missed Hit,6,,0
+Condition Event,Display Image,4,,Condition Event,Mistake,6,,0
