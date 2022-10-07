@@ -851,7 +851,7 @@ class PhotometryData:
             file_path_string = output_folder + self.folder_symbol + output_data + '-' + current_time_string + '.csv'
 
         if filename_override != '':
-            file_path_string = output_folder + self.folder_symbol + filename_override
+            file_path_string = filename_override + '-' + output_data + '.csv'
 
         print(file_path_string)
         if output_data in processed_list:
@@ -1032,10 +1032,8 @@ for row_index, row in file_csv.iterrows():
             analyzer.abet_search_event(start_event_id=row2.loc['event_type'],
                                        start_event_item_name=row2.loc['event_name'],
                                        start_event_group=row2.loc['event_group'],
-                                       extra_prior_time=event_prior, extra_follow_time=event_follow,
-                                       centered_event=True, filter_event=True,
-                                       filter_list=filter_list,
-                                       exclusion_list=exclusion_list)
+                                       extra_prior_time=event_prior, extra_follow_time=event_follow, filter_event=True,
+                                       filter_list=filter_list, exclusion_list=exclusion_list)
 
         if analyzer.abet_event_times.shape[0] < 1:
             print('no events located')
