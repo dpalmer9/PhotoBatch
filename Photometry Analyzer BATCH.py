@@ -1,4 +1,4 @@
-## Imports ##
+# Imports
 import os
 import sys
 import csv
@@ -11,8 +11,8 @@ import pandas as pd
 pd.set_option('mode.chained_assignment', None)
 
 
-## Classes ##
-class Photometry_Data:
+# Classes
+class PhotometryData:
     def __init__(self):
 
         # Initialize Folder Path Variables
@@ -146,8 +146,8 @@ class Photometry_Data:
         self.doric_pandas = self.doric_pandas.astype('float')
 
     """ abet_trial_definition - Defines a trial structure for the components of the ABET II unprocessed data.
-        This method uses the Item names of Condition Events that represent the normal start and end of a trial epoch. This
-        method was expanded in PhotometryBatch to allow for multiple start and end groups.
+        This method uses the Item names of Condition Events that represent the normal start and end of a trial epoch.
+        This method was expanded in PhotometryBatch to allow for multiple start and end groups.
         Arguments:
         start_event_group = the name of an ABET II Condition Event that defines the start of a trial
         end_event_group = the name of an ABET II Condition Event that defines the end of a trial
@@ -190,9 +190,8 @@ class Photometry_Data:
 
     """ abet_search_event - This function searches through the ABET unprocessed data 
         for events specified in the ABET GUI. These events can be Condition Events, Variable Events,
-        Touch Up/Down Events, Input Transition On/Off Events. NOTE this version of the function was
-        generated in PhotoBatch and contains code for filtering primary events. This feature is not
-        implemented in PhotometryAnalyzer. The output of this function is a pandas dataframe with the
+        Touch Up/Down Events, Input Transition On/Off Events. This function can filter primary
+        events with an unlimited number of filters. The output of this function is a pandas dataframe with the
         start and end times for all the identified events with the user specified padding.
         Arguments:
         start_event_id = The numerical value in the ABET II unprocessed file denoting the type of event.
@@ -202,92 +201,99 @@ class Photometry_Data:
         start_event_item name = The name of the specific event in the Item Name column.
         start_event_position = A numerical value denoting the positional argument of the event in the case of a
         Touch Up/Down event
-        filter_event_id = The numerical value in the ABET II unprocessed file denoting the type of filter event.
-        filter_event_group = The numerical value denoting the group number as defined by the ABET II schedule designer
-        for the filtering event
-        filter_event_item_name = The name of the specific event in the Item Name column for the filter event
-        filter_event_position = A numerical value denoting the positional argument of the filter event in the case of
-        a Touch Up/Down event
-        filter_event = A boolean value denoting whether to check for a filter
-        filter_before = A boolean value denoting whether the filter is an event preceding or following the main event
+        filter_list = A list of any filters present in the batch list. List stores dictionaries for each filter.
         extra_prior_time = A float value denoting the amount of time prior to the main event to pad it by
         extra_follow_time = A float value denoting the amount of time following the maine vent to pad it by
         """
 
     def abet_search_event(self, start_event_id='1', start_event_group='', start_event_item_name='',
                           start_event_position=None,
-                          filter_event_id='1', filter_event_group='', filter_event_item_name='',
-                          filter_event_position=None,
-                          filter_event=False, filter_before=True,
-                          extra_prior_time=0, extra_follow_time=0):
+                          filter_event=False, filter_list=None, extra_prior_time=0, extra_follow_time=0,
+                          exclusion_list=None):
 
-        filter_event_abet = None
-        if filter_event_position is None:
-            filter_event_position = ['']
-        if start_event_position is None:
-            start_event_position = ['']
+        if filter_list is None:
+            filter_list = []
+
+        def filter_event_data(event_data, abet_data, filter_type='', filter_name='', filter_group='', filter_arg='',
+                              filter_before=1):
+            condition_event_names = ['Condition Event']
+            variable_event_names = ['Variable Event']
+            if filter_type in condition_event_names:
+                filter_event_abet = abet_data.loc[(abet_data[self.event_name_col] == str(filter_type)) & (
+                            abet_data['Group_ID'] == str(int(filter_group))), :]
+                filter_event_abet = filter_event_abet[~filter_event_abet.isin(exclusion_list)]
+                filter_event_abet = filter_event_abet.dropna(subset=['Item_Name'])
+                for index, value in event_data.items():
+                    sub_values = filter_event_abet.loc[:, self.time_var_name]
+                    sub_values = sub_values.astype(dtype='float64')
+                    sub_values = sub_values.sub(float(value))
+                    filter_before = int(float(filter_before))
+                    if filter_before == 1:
+                        sub_values[sub_values > 0] = np.nan
+                    elif filter_before == 0:
+                        sub_values[sub_values < 0] = np.nan
+                    sub_index = sub_values.abs().idxmin(skipna=True)
+                    sub_null = sub_values.isnull().sum()
+                    if sub_null >= sub_values.size:
+                        continue
+
+                    filter_value = filter_event_abet.loc[sub_index, 'Item_Name']
+                    if filter_value != filter_name:
+                        event_data[index] = np.nan
+
+                event_data = event_data.dropna()
+                event_data = event_data.reset_index(drop=True)
+            elif filter_type in variable_event_names:
+                filter_event_abet = abet_data.loc[(abet_data[self.event_name_col] == str(filter_type)) & (
+                            abet_data['Item_Name'] == str(filter_name)), :]
+                filter_event_abet = filter_event_abet[~filter_event_abet.isin(exclusion_list)]
+                filter_event_abet = filter_event_abet.dropna(subset=['Item_Name'])
+                for index, value in event_data.items():
+                    sub_values = filter_event_abet.loc[:, self.time_var_name]
+                    sub_values = sub_values.astype(dtype='float64')
+                    sub_values = sub_values.sub(float(value))
+                    sub_null = sub_values.isnull().sum()
+                    filter_before = int(float(filter_before))
+                    if sub_null >= sub_values.size:
+                        continue
+                    if filter_before == 1:
+                        sub_values[sub_values > 0] = np.nan
+                    elif filter_before == 0:
+                        sub_values[sub_values < 0] = np.nan
+                    sub_index = sub_values.abs().idxmin(skipna=True)
+
+                    filter_value = filter_event_abet.loc[sub_index, 'Arg1_Value']
+                    if float(filter_value) != float(filter_arg):
+                        event_data[index] = np.nan
+
+                event_data = event_data.dropna()
+                event_data = event_data.reset_index(drop=True)
+            return event_data
+
         touch_event_names = ['Touch Up Event', 'Touch Down Event', 'Whisker - Clear Image by Position']
-        condition_event_names = ['Condition Event']
-        variable_event_names = ['Variable Event']
 
         if start_event_id in touch_event_names:
             filtered_abet = self.abet_pandas.loc[(self.abet_pandas[self.event_name_col] == str(start_event_id)) & (
-                    self.abet_pandas['Group_ID'] == str(start_event_group)) &
+                        self.abet_pandas['Group_ID'] == str(start_event_group)) &
                                                  (self.abet_pandas['Item_Name'] == str(start_event_item_name)) & (
-                                                         self.abet_pandas['Arg1_Value'] == str(start_event_position)), :
-                            ]
+                                                             self.abet_pandas['Arg1_Value'] ==
+                                                             str(start_event_position)), :]
 
         else:
             filtered_abet = self.abet_pandas.loc[(self.abet_pandas[self.event_name_col] == str(start_event_id)) & (
-                    self.abet_pandas['Group_ID'] == str(start_event_group)) &
+                        self.abet_pandas['Group_ID'] == str(start_event_group)) &
                                                  (self.abet_pandas['Item_Name'] == str(start_event_item_name)), :]
-
-        if filter_event:
-            if filter_event_id in condition_event_names:
-                filter_event_abet = self.abet_pandas.loc[
-                                    (self.abet_pandas[self.event_name_col] == str(filter_event_id)) & (
-                                            self.abet_pandas['Group_ID'] == str(filter_event_group)), :]
-            elif filter_event_id in variable_event_names:
-                filter_event_abet = self.abet_pandas.loc[
-                                    (self.abet_pandas[self.event_name_col] == str(filter_event_id)) & (
-                                            self.abet_pandas['Item_Name'] == str(filter_event_item_name)), :]
 
         self.abet_event_times = filtered_abet.loc[:, self.time_var_name]
         self.abet_event_times = self.abet_event_times.reset_index(drop=True)
         self.abet_event_times = pd.to_numeric(self.abet_event_times, errors='coerce')
 
         if filter_event:
-            if filter_event_id in condition_event_names:
-                for index, value in self.abet_event_times.items():
-                    sub_values = filter_event_abet.loc[:, self.time_var_name]
-                    sub_values = sub_values.astype(dtype='float64')
-                    sub_values = sub_values.sub(float(value))
-                    if filter_before:
-                        sub_values[sub_values > 0] = np.nan
-                    else:
-                        sub_values[sub_values < 0] = np.nan
-                    sub_index = sub_values.abs().idxmin(skipna=True)
-
-                    filter_value = filter_event_abet.loc[sub_index, 'Item_Name']
-                    if filter_value != filter_event_item_name:
-                        self.abet_event_times[index] = np.nan
-
-                self.abet_event_times = self.abet_event_times.dropna()
-                self.abet_event_times = self.abet_event_times.reset_index(drop=True)
-            elif filter_event_id in variable_event_names:
-                for index, value in self.abet_event_times.items():
-                    sub_values = filter_event_abet.loc[:, self.time_var_name]
-                    sub_values = sub_values.astype(dtype='float64')
-                    sub_values = sub_values.sub(float(value))
-                    if filter_before:
-                        sub_values[sub_values > 0] = np.nan
-                    else:
-                        sub_values[sub_values < 0] = np.nan
-                    sub_index = sub_values.abs().idxmin(skipna=True)
-
-                    filter_value = filter_event_abet.loc[sub_index, 'Arg1_Value']
-                    if filter_value != filter_event_position:
-                        self.abet_event_times[index] = np.nan
+            for fil in filter_list:
+                self.abet_event_times = filter_event_data(self.abet_event_times, self.abet_pandas,
+                                                          str(fil['Type']), str(fil['Name']),
+                                                          str(fil['Group']), str(fil['Arg']),
+                                                          str(fil['Prior']))
 
         abet_start_times = self.abet_event_times - extra_prior_time
         abet_end_times = self.abet_event_times + extra_follow_time
@@ -307,12 +313,12 @@ class Photometry_Data:
         if not self.doric_loaded:
             return None
         try:
-            doric_ttl_active = self.doric_pandas.loc[(self.doric_pandas['TTL'] > 1.00),]
+            doric_ttl_active = self.doric_pandas.loc[(self.doric_pandas['TTL'] > 1.00), ]
         except KeyError:
             print('No TTL Signal Detected. Ending Analysis.')
             return
         try:
-            abet_ttl_active = self.abet_pandas.loc[(self.abet_pandas['Item_Name'] == 'TTL #1'),]
+            abet_ttl_active = self.abet_pandas.loc[(self.abet_pandas['Item_Name'] == 'TTL #1'), ]
         except KeyError:
             print('ABET II File missing TTL Pulse Output. Ending Analysis.')
             return
@@ -331,8 +337,8 @@ class Photometry_Data:
 
     """doric_process - This function calculates the delta-f value based on the isobestic and active channel data.
         The two channels are first put through a 2nd order low-pass butterworth filter with a user-specified cutoff. 
-        Following filtering, the data is fit with least squares regression to a linear function. Finally, the fitted data
-        is used to calculate a delta-F value. A pandas dataframe with the time and delta-f values is created.
+        Following filtering, the data is fit with least squares regression to a linear function. Finally, the fitted
+        data is used to calculate a delta-F value. A pandas dataframe with the time and delta-f values is created.
         Arguments:
         filter_frequency = The cut-off frequency used for the low-pass filter"""
 
@@ -420,6 +426,10 @@ class Photometry_Data:
                     end_index -= 1
 
                 trial_deltaf = self.doric_pd.iloc[start_index:end_index]
+                iti_deltaf = np.empty([1, 1])
+                z_mean = np.empty([1, 1])
+                z_sd = np.empty([1, 1])
+
                 if not whole_trial_normalize:
                     if normalize_side in left_selection_list:
                         norm_end_time = self.abet_time_list.loc[index, 'Start_Time'] + trial_iti_pad
@@ -563,7 +573,7 @@ class Photometry_Data:
                         trial_iti_window = trial_start_window - float(trial_iti_pad)
                         iti_data = self.doric_pd.loc[(self.doric_pd.loc[:, 'Time'] >= trial_iti_window) & (
                                     self.doric_pd.loc[:, 'Time'] <= trial_start_window), 'DeltaF']
-                    elif normalize_side in right_selection_list:
+                    else:
                         trial_end_index = self.trial_definition_times.loc[:, 'End_Time'].sub(
                             self.abet_time_list.loc[index, 'End_Time']).abs().idxmin()
                         trial_end_window = self.trial_definition_times.iloc[trial_end_index, 0]
@@ -677,13 +687,13 @@ class Photometry_Data:
                 try:
                     end_index = self.doric_pd.loc[:, 'Time'].sub(
                         mod_trial_times.loc[index, 'Start_Time']).abs().idxmin()
-                except:
+                except IndexError:
                     print('Trial Start Out of Bounds, Skipping Event')
                     continue
                 try:
                     start_index = self.doric_pd.loc[:, 'Time'].sub(
                         mod_trial_times.loc[index, 'End_Time']).abs().idxmin()
-                except:
+                except IndexError:
                     print('Trial End Out of Bounds, Skipping Event')
                     continue
 
@@ -701,6 +711,7 @@ class Photometry_Data:
 
                 iti_deltaf = self.doric_pd.iloc[start_index:end_index]
                 iti_deltaf = iti_deltaf.loc[:, 'DeltaF']
+                full_iti_deltaf = pd.DataFrame()
                 if index == 0:
                     full_iti_deltaf = iti_deltaf
                 else:
@@ -717,13 +728,13 @@ class Photometry_Data:
                 try:
                     start_index = self.doric_pd.loc[:, 'Time'].sub(
                         self.abet_time_list.loc[index, 'Start_Time']).abs().idxmin()
-                except:
+                except IndexError:
                     print('Trial Start Out of Bounds, Skipping Event')
                     continue
                 try:
                     end_index = self.doric_pd.loc[:, 'Time'].sub(
                         self.abet_time_list.loc[index, 'End_Time']).abs().idxmin()
-                except:
+                except IndexError:
                     print('Trial End Out of Bounds, Skipping Event')
                     continue
 
@@ -861,13 +872,16 @@ class Photometry_Data:
 
 # Functions
 def abet_extract_information(abet_file_path):
+    animal_id = ''
+    date = ''
+    schedule = ''
     abet_file_path = abet_file_path
     abet_file = open(abet_file_path)
     abet_csv_reader = csv.reader(abet_file)
     event_time_colname = ['Evnt_Time', 'Event_Time']
     colnames_found = False
     for row in abet_csv_reader:
-        if colnames_found == False:
+        if not colnames_found:
             if len(row) == 0:
                 continue
             if row[0] == 'Animal ID':
@@ -891,7 +905,7 @@ def abet_extract_information(abet_file_path):
 # Config Load
 curr_dirr = os.getcwd()
 
-config_ini = curr_dirr + '\config.ini'
+config_ini = curr_dirr + '\\config.ini'
 config_file = configparser.ConfigParser()
 config_file.read(config_ini)
 
@@ -938,7 +952,7 @@ exclusion_list = exclusion_list.split(',')
 # Run the Batch
 
 for row_index, row in file_csv.iterrows():
-    analyzer = Photometry_Data()
+    analyzer = PhotometryData()
 
     abet_path = row.loc['abet_path']
     doric_path = row.loc['doric_path']
@@ -951,17 +965,10 @@ for row_index, row in file_csv.iterrows():
 
     analyzer.load_abet_data(abet_path)
     analyzer.load_doric_data(doric_path, ctrl_col_index, active_col_index, ttl_col_index)
-    try:
-        analyzer.abet_trial_definition(start_group_name, end_group_name)
-    except:
-        print('Fail to Identify Definition Structure')
-        continue
+    analyzer.abet_trial_definition(start_group_name, end_group_name)
 
-    try:
-        analyzer.abet_doric_synchronize()
-    except:
-        print('No Sync Event')
-        continue
+    analyzer.abet_doric_synchronize()
+
     analyzer.doric_process(filter_frequency=filter_frequency)
 
     raw_processed = False
@@ -991,7 +998,7 @@ for row_index, row in file_csv.iterrows():
                     fil_group_str = 'filter_group' + fil_mod
                     fil_arg_str = 'filter_arg' + fil_mod
                     fil_prior_str = 'filter_prior' + fil_mod
-                elif legacy_code:
+                else:
                     fil_type_str = 'filter_type'
                     fil_name_str = 'filter_name'
                     fil_group_str = 'filter_group'
@@ -1015,40 +1022,27 @@ for row_index, row in file_csv.iterrows():
         null_check = row2.isnull()
 
         if row2['num_filter'] == 0:
-            try:
-                analyzer.abet_search_event(start_event_id=row2.loc['event_type'],
-                                           start_event_item_name=row2.loc['event_name'],
-                                           start_event_group=row2.loc['event_group'],
-                                           extra_prior_time=event_prior, extra_follow_time=event_follow,
-                                           centered_event=True)
-            except:
-                print('failed to find event')
-                continue
+            analyzer.abet_search_event(start_event_id=row2.loc['event_type'],
+                                       start_event_item_name=row2.loc['event_name'],
+                                       start_event_group=row2.loc['event_group'],
+                                       extra_prior_time=event_prior, extra_follow_time=event_follow,
+                                       centered_event=True)
 
         elif row2['num_filter'] >= 1:
-            try:
-                analyzer.abet_search_event(start_event_id=row2.loc['event_type'],
-                                           start_event_item_name=row2.loc['event_name'],
-                                           start_event_group=row2.loc['event_group'],
-                                           extra_prior_time=event_prior, extra_follow_time=event_follow,
-                                           centered_event=True, filter_event=True,
-                                           filter_list=filter_list,
-                                           exclusion_list=exclusion_list)
-            except:
-                print('failed to find event with filter')
-                continue
+            analyzer.abet_search_event(start_event_id=row2.loc['event_type'],
+                                       start_event_item_name=row2.loc['event_name'],
+                                       start_event_group=row2.loc['event_group'],
+                                       extra_prior_time=event_prior, extra_follow_time=event_follow,
+                                       centered_event=True, filter_event=True,
+                                       filter_list=filter_list,
+                                       exclusion_list=exclusion_list)
 
         if analyzer.abet_event_times.shape[0] < 1:
             print('no events located')
             continue
 
-        try:
-            analyzer.trial_separator(normalize=True, whole_trial_normalize=whole_trial_normalize,
-                                     trial_definition=1, trial_iti_pad=iti_prior, center_method=center_method)
-
-        except:
-            print('failed to separate trials')
-            continue
+        analyzer.trial_separator(whole_trial_normalize=whole_trial_normalize, trial_definition=1,
+                                 trial_iti_pad=iti_prior, center_method=center_method)
 
         if run_simplez == 1:
             analyzer.write_data('SimpleZ', filename_override=file_dir)
@@ -1062,7 +1056,7 @@ for row_index, row in file_csv.iterrows():
             analyzer.write_data('SimpleF', filename_override=file_dir)
         if run_timedf == 1:
             analyzer.write_data('TimedF', filename_override=file_dir)
-        if run_raw == 1 and raw_processed == False:
+        if run_raw == 1 and not raw_processed:
             file_path_raw = output_path + animal_id + '-' + schedule + '-' + date
             analyzer.write_data('Full', filename_override=file_path_raw)
             raw_processed = True
