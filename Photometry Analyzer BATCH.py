@@ -550,11 +550,17 @@ class PhotometryData:
                     print('Trial End Out of Bounds, Skipping Event')
                     continue
 
-                while self.doric_pd.iloc[start_index, 0] > self.abet_time_list.loc[index, 'Start_Time']:
-                    start_index -= 1
+                try:
+                    while self.doric_pd.iloc[start_index, 0] > self.abet_time_list.loc[index, 'Start_Time']:
+                        start_index -= 1
+                except IndexError:
+                    continue
 
-                while self.doric_pd.iloc[end_index, 0] < self.abet_time_list.loc[index, 'End_Time']:
-                    end_index += 1
+                try:
+                    while self.doric_pd.iloc[end_index, 0] < self.abet_time_list.loc[index, 'End_Time']:
+                        end_index += 1
+                except IndexError:
+                    continue
 
                 while len(range(start_index, (end_index + 1))) < measurements_per_interval:
                     end_index += 1
@@ -1025,8 +1031,7 @@ for row_index, row in file_csv.iterrows():
             analyzer.abet_search_event(start_event_id=row2.loc['event_type'],
                                        start_event_item_name=row2.loc['event_name'],
                                        start_event_group=row2.loc['event_group'],
-                                       extra_prior_time=event_prior, extra_follow_time=event_follow,
-                                       centered_event=True)
+                                       extra_prior_time=event_prior, extra_follow_time=event_follow)
 
         elif row2['num_filter'] >= 1:
             analyzer.abet_search_event(start_event_id=row2.loc['event_type'],
