@@ -219,8 +219,6 @@ class PhotometryData:
             condition_event_names = ['Condition Event']
             variable_event_names = ['Variable Event']
             if filter_type in condition_event_names:
-                print(filter_group)
-                print(str(int(float(filter_group))))
                 filter_event_abet = abet_data.loc[(abet_data[self.event_name_col] == str(filter_type)) & (
                             abet_data['Group_ID'] == str(int(filter_group))), :]
                 filter_event_abet = filter_event_abet[~filter_event_abet.isin(exclusion_list)]
