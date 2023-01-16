@@ -175,7 +175,7 @@ class PhotometryData:
         filtered_abet = filtered_abet.reset_index(drop=True)
         if filtered_abet.iloc[0, 3] != str(start_event_group):
             filtered_abet = filtered_abet.drop([0])
-            print('FAILED')
+            print('First Trial Event Not Start Stage. Moving to Next Event.')
         trial_times = filtered_abet.loc[:, self.time_var_name]
         trial_times = trial_times.reset_index(drop=True)
         start_times = trial_times.iloc[::2]
@@ -219,6 +219,8 @@ class PhotometryData:
             condition_event_names = ['Condition Event']
             variable_event_names = ['Variable Event']
             if filter_type in condition_event_names:
+                print(filter_group)
+                print(str(int(float(filter_group))))
                 filter_event_abet = abet_data.loc[(abet_data[self.event_name_col] == str(filter_type)) & (
                             abet_data['Group_ID'] == str(int(filter_group))), :]
                 filter_event_abet = filter_event_abet[~filter_event_abet.isin(exclusion_list)]
@@ -1012,7 +1014,7 @@ for row_index, row in file_csv.iterrows():
                     fil_prior_str = 'filter_prior'
 
                 fil_dict = {'Type': row2[fil_type_str], 'Name': row2[fil_name_str],
-                            'Group': row2[fil_group_str], 'Arg': row2[fil_arg_str],
+                            'Group': str(int(row2[fil_group_str])), 'Arg': row2[fil_arg_str],
                             'Prior': row2[fil_prior_str]}
                 filter_list.append(fil_dict)
 
