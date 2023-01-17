@@ -173,9 +173,14 @@ class PhotometryData:
                     self.abet_pandas['Item_Name'] == str(end_event_group))) & (self.abet_pandas['Evnt_ID'] == '1')]
 
         filtered_abet = filtered_abet.reset_index(drop=True)
-        if filtered_abet.iloc[0, 3] != str(start_event_group):
-            filtered_abet = filtered_abet.drop([0])
-            print('First Trial Event Not Start Stage. Moving to Next Event.')
+        if isinstance(start_event_group, list):
+            if filtered_abet.iloc[0, 3] not in start_event_group:
+                filtered_abet = filtered_abet.drop([0])
+                print('First Trial Event Not Start Stage. Moving to Next Event.')
+        elif isinstance(start_event_group, str):
+            if filtered_abet.iloc[0, 3] != str(start_event_group):
+                filtered_abet = filtered_abet.drop([0])
+                print('First Trial Event Not Start Stage. Moving to Next Event.')
         trial_times = filtered_abet.loc[:, self.time_var_name]
         trial_times = trial_times.reset_index(drop=True)
         start_times = trial_times.iloc[::2]
