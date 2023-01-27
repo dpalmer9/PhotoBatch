@@ -1,22 +1,43 @@
-event_type,event_name,event_group,event_arg,num_filter,filter_type,filter_name,filter_group,filter_arg,filter_prior,filter_type2,filter_name2,filter_group2,filter_arg2,filter_prior2
-Condition Event,Display Image,4,,2,Condition Event,Hit,6,,0,Variable Event,Current_Image,3,1,1
-Condition Event,Display Image,4,,2,Condition Event,Correct Rejection,6,,0,Variable Event,Current_Image,3,4,1
-Condition Event,Display Image,4,,2,Condition Event,Missed Hit,6,,0,Variable Event,Current_Image,3,1,1
-Condition Event,Display Image,4,,2,Condition Event,Mistake,6,,0,Variable Event,Current_Image,3,4,1
-Condition Event,Display Image,4,,2,Condition Event,Hit,6,,0,Variable Event,Current_Image,3,2,1
-Condition Event,Display Image,4,,2,Condition Event,Correct Rejection,6,,0,Variable Event,Current_Image,3,5,1
-Condition Event,Display Image,4,,2,Condition Event,Missed Hit,6,,0,Variable Event,Current_Image,3,2,1
-Condition Event,Display Image,4,,2,Condition Event,Mistake,6,,0,Variable Event,Current_Image,3,5,1
-Condition Event,Display Image,4,,2,Condition Event,Hit,6,,0,Variable Event,Current_Image,3,3,1
-Condition Event,Display Image,4,,2,Condition Event,Correct Rejection,6,,0,Variable Event,Current_Image,3,6,1
-Condition Event,Display Image,4,,2,Condition Event,Missed Hit,6,,0,Variable Event,Current_Image,3,3,1
-Condition Event,Display Image,4,,2,Condition Event,Mistake,6,,0,Variable Event,Current_Image,3,6,1
-Condition Event,Reward Collected Start ITI,7,,1,Variable Event,Current_Image,3,1,1,,,,,
-Condition Event,Reward Collected Start ITI,7,,1,Variable Event,Current_Image,3,2,1,,,,,
-Condition Event,Reward Collected Start ITI,7,,1,Variable Event,Current_Image,3,3,1,,,,,
-Condition Event,Hit,6,,1,Variable Event,Current_Image,3,1,1,,,,,
-Condition Event,Hit,6,,1,Variable Event,Current_Image,3,2,1,,,,,
-Condition Event,Hit,6,,1,Variable Event,Current_Image,3,3,1,,,,,
-Condition Event,Mistake,6,,1,Variable Event,Current_Image,3,4,1,,,,,
-Condition Event,Mistake,6,,1,Variable Event,Current_Image,3,5,1,,,,,
-Condition Event,Mistake,6,,1,Variable Event,Current_Image,3,6,1,,,,,
+event_type,event_name,event_group,event_arg,num_filter,filter_type,filter_name,filter_group,filter_arg,filter_eval,filter_prior,filter_type2,filter_name2,filter_group2,filter_arg2,filter_eval2,filter_prior2,filter_type3,filter_name3,filter_group3,filter_arg3,filter_eval3,filter_prior3
+Condition Event,Display Sample,20,,0,,,,,,,,,,,,,,,,,,
+Condition Event,Sample Touch,21,,0,,,,,,,,,,,,,,,,,,
+Condition Event,Choice Stage,6,,0,,,,,,,,,,,,,,,,,,
+Condition Event,Correct,7,,0,,,,,,,,,,,,,,,,,,
+Condition Event,Incorrect,7,,0,,,,,,,,,,,,,,,,,,
+Condition Event,Reward Collected Start ITI,8,,0,,,,,,,,,,,,,,,,,,
+Condition Event,Display Sample,20,,2,Variable Event,_Trial_Counter,3,9,>,1,Variable Event,_Trial_Counter,3,49,<=,1,,,,,,
+Condition Event,Sample Touch,21,,2,Variable Event,_Trial_Counter,3,9,>,1,Variable Event,_Trial_Counter,3,49,<=,1,,,,,,
+Condition Event,Choice Stage,6,,2,Variable Event,_Trial_Counter,3,9,>,1,Variable Event,_Trial_Counter,3,49,<=,1,,,,,,
+Condition Event,Correct,7,,2,Variable Event,_Trial_Counter,3,9,>,1,Variable Event,_Trial_Counter,3,49,<=,1,,,,,,
+Condition Event,Incorrect,7,,2,Variable Event,_Trial_Counter,3,9,>,1,Variable Event,_Trial_Counter,3,49,<=,1,,,,,,
+Condition Event,Reward Collected Start ITI,8,,2,Variable Event,_Trial_Counter,3,9,>,1,Variable Event,_Trial_Counter,3,49,<=,1,,,,,,
+Condition Event,Display Sample,20,,2,Variable Event,_Trial_Counter,3,49,>,1,Variable Event,_Trial_Counter,3,90,<=,1,,,,,,
+Condition Event,Sample Touch,21,,2,Variable Event,_Trial_Counter,3,49,>,1,Variable Event,_Trial_Counter,3,90,<=,1,,,,,,
+Condition Event,Choice Stage,6,,2,Variable Event,_Trial_Counter,3,49,>,1,Variable Event,_Trial_Counter,3,90,<=,1,,,,,,
+Condition Event,Correct,7,,2,Variable Event,_Trial_Counter,3,49,>,1,Variable Event,_Trial_Counter,3,90,<=,1,,,,,,
+Condition Event,Incorrect,7,,2,Variable Event,_Trial_Counter,3,49,>,1,Variable Event,_Trial_Counter,3,90,<=,1,,,,,,
+Condition Event,Reward Collected Start ITI,8,,2,Variable Event,_Trial_Counter,3,49,>,1,Variable Event,_Trial_Counter,3,90,<=,1,,,,,,
+Condition Event,Display Sample,20,,3,Variable Event,_Trial_Counter,3,9,>,1,Variable Event,_Trial_Counter,3,49,<=,1,Variable Event,aTrial_Set,4,"13,24,53,64",inlist,1
+Condition Event,Sample Touch,21,,3,Variable Event,_Trial_Counter,3,9,>,1,Variable Event,_Trial_Counter,3,49,<=,1,Variable Event,aTrial_Set,4,"13,24,53,64",inlist,1
+Condition Event,Choice Stage,6,,3,Variable Event,_Trial_Counter,3,9,>,1,Variable Event,_Trial_Counter,3,49,<=,1,Variable Event,aTrial_Set,4,"13,24,53,64",inlist,1
+Condition Event,Correct,7,,3,Variable Event,_Trial_Counter,3,9,>,1,Variable Event,_Trial_Counter,3,49,<=,1,Variable Event,aTrial_Set,4,"13,24,53,64",inlist,1
+Condition Event,Incorrect,7,,3,Variable Event,_Trial_Counter,3,9,>,1,Variable Event,_Trial_Counter,3,49,<=,1,Variable Event,aTrial_Set,4,"13,24,53,64",inlist,1
+Condition Event,Reward Collected Start ITI,8,,3,Variable Event,_Trial_Counter,3,9,>,1,Variable Event,_Trial_Counter,3,49,<=,1,Variable Event,aTrial_Set,4,"13,24,53,64",inlist,1
+Condition Event,Display Sample,20,,3,Variable Event,_Trial_Counter,3,49,>,1,Variable Event,_Trial_Counter,3,90,<=,1,Variable Event,aTrial_Set,4,"13,24,53,64",inlist,1
+Condition Event,Sample Touch,21,,3,Variable Event,_Trial_Counter,3,49,>,1,Variable Event,_Trial_Counter,3,90,<=,1,Variable Event,aTrial_Set,4,"13,24,53,64",inlist,1
+Condition Event,Choice Stage,6,,3,Variable Event,_Trial_Counter,3,49,>,1,Variable Event,_Trial_Counter,3,90,<=,1,Variable Event,aTrial_Set,4,"13,24,53,64",inlist,1
+Condition Event,Correct,7,,3,Variable Event,_Trial_Counter,3,49,>,1,Variable Event,_Trial_Counter,3,90,<=,1,Variable Event,aTrial_Set,4,"13,24,53,64",inlist,1
+Condition Event,Incorrect,7,,3,Variable Event,_Trial_Counter,3,49,>,1,Variable Event,_Trial_Counter,3,90,<=,1,Variable Event,aTrial_Set,4,"13,24,53,64",inlist,1
+Condition Event,Reward Collected Start ITI,8,,3,Variable Event,_Trial_Counter,3,49,>,1,Variable Event,_Trial_Counter,3,90,<=,1,Variable Event,aTrial_Set,4,"13,24,53,64",inlist,1
+Condition Event,Display Sample,20,,3,Variable Event,_Trial_Counter,3,9,>,1,Variable Event,_Trial_Counter,3,49,<=,1,Variable Event,aTrial_Set,4,"31,35,42,46",inlist,1
+Condition Event,Sample Touch,21,,3,Variable Event,_Trial_Counter,3,9,>,1,Variable Event,_Trial_Counter,3,49,<=,1,Variable Event,aTrial_Set,4,"31,35,42,46",inlist,1
+Condition Event,Choice Stage,6,,3,Variable Event,_Trial_Counter,3,9,>,1,Variable Event,_Trial_Counter,3,49,<=,1,Variable Event,aTrial_Set,4,"31,35,42,46",inlist,1
+Condition Event,Correct,7,,3,Variable Event,_Trial_Counter,3,9,>,1,Variable Event,_Trial_Counter,3,49,<=,1,Variable Event,aTrial_Set,4,"31,35,42,46",inlist,1
+Condition Event,Incorrect,7,,3,Variable Event,_Trial_Counter,3,9,>,1,Variable Event,_Trial_Counter,3,49,<=,1,Variable Event,aTrial_Set,4,"31,35,42,46",inlist,1
+Condition Event,Reward Collected Start ITI,8,,3,Variable Event,_Trial_Counter,3,9,>,1,Variable Event,_Trial_Counter,3,49,<=,1,Variable Event,aTrial_Set,4,"31,35,42,46",inlist,1
+Condition Event,Display Sample,20,,3,Variable Event,_Trial_Counter,3,49,>,1,Variable Event,_Trial_Counter,3,90,<=,1,Variable Event,aTrial_Set,4,"31,35,42,46",inlist,1
+Condition Event,Sample Touch,21,,3,Variable Event,_Trial_Counter,3,49,>,1,Variable Event,_Trial_Counter,3,90,<=,1,Variable Event,aTrial_Set,4,"31,35,42,46",inlist,1
+Condition Event,Choice Stage,6,,3,Variable Event,_Trial_Counter,3,49,>,1,Variable Event,_Trial_Counter,3,90,<=,1,Variable Event,aTrial_Set,4,"31,35,42,46",inlist,1
+Condition Event,Correct,7,,3,Variable Event,_Trial_Counter,3,49,>,1,Variable Event,_Trial_Counter,3,90,<=,1,Variable Event,aTrial_Set,4,"31,35,42,46",inlist,1
+Condition Event,Incorrect,7,,3,Variable Event,_Trial_Counter,3,49,>,1,Variable Event,_Trial_Counter,3,90,<=,1,Variable Event,aTrial_Set,4,"31,35,42,46",inlist,1
+Condition Event,Reward Collected Start ITI,8,,3,Variable Event,_Trial_Counter,3,49,>,1,Variable Event,_Trial_Counter,3,90,<=,1,Variable Event,aTrial_Set,4,"31,35,42,46",inlist,1

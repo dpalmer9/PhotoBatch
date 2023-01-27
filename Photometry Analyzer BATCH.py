@@ -220,7 +220,7 @@ class PhotometryData:
             filter_list = []
 
         def filter_event_data(event_data, abet_data, filter_type='', filter_name='', filter_group='', filter_arg='',
-                              filter_before=1):
+                              filter_before=1,filter_eval=''):
             condition_event_names = ['Condition Event']
             variable_event_names = ['Variable Event']
             if filter_type in condition_event_names:
@@ -266,10 +266,36 @@ class PhotometryData:
                     elif filter_before == 0:
                         sub_values[sub_values < 0] = np.nan
                     sub_index = sub_values.abs().idxmin(skipna=True)
-
                     filter_value = filter_event_abet.loc[sub_index, 'Arg1_Value']
-                    if float(filter_value) != float(filter_arg):
-                        event_data[index] = np.nan
+                    
+                    # Equals
+                    if ',' in filter_arg:
+                        filter_arg = filter_arg.split(',')
+                        
+                    if filter_eval == "inlist":
+                        if filter_value not in filter_arg:
+                            event_data[index] = np.nan
+                    if filter_eval == "notinlist":
+                        if filter_value in filter_arg:
+                            event_data[index] = np.nan
+                    if filter_eval == '=':
+                        if float(filter_value) != float(filter_arg):
+                            event_data[index] = np.nan
+                    if filter_eval == '!=':
+                        if float(filter_value) == float(filter_arg):
+                            event_data[index] = np.nan
+                    if filter_eval == '<':
+                        if float(filter_value) >= float(filter_arg):
+                            event_data[index] = np.nan
+                    if filter_eval == '<=':
+                        if float(filter_value) > float(filter_arg):
+                            event_data[index] = np.nan
+                    if filter_eval == '>':
+                        if float(filter_value) <= float(filter_arg):
+                            event_data[index] = np.nan
+                    if filter_eval == '>':
+                        if float(filter_value) < float(filter_arg):
+                            event_data[index] = np.nan
 
                 event_data = event_data.dropna()
                 event_data = event_data.reset_index(drop=True)
@@ -298,7 +324,7 @@ class PhotometryData:
                 self.abet_event_times = filter_event_data(self.abet_event_times, self.abet_pandas,
                                                           str(fil['Type']), str(fil['Name']),
                                                           str(fil['Group']), str(fil['Arg']),
-                                                          str(fil['Prior']))
+                                                          str(fil['Prior']), str(fil['Eval']))
 
         abet_start_times = self.abet_event_times - extra_prior_time
         abet_end_times = self.abet_event_times + extra_follow_time
@@ -1008,17 +1034,19 @@ for row_index, row in file_csv.iterrows():
                     fil_name_str = 'filter_name' + fil_mod
                     fil_group_str = 'filter_group' + fil_mod
                     fil_arg_str = 'filter_arg' + fil_mod
+                    fil_eval_str = 'filter_eval' + fil_mod
                     fil_prior_str = 'filter_prior' + fil_mod
                 else:
                     fil_type_str = 'filter_type'
                     fil_name_str = 'filter_name'
                     fil_group_str = 'filter_group'
                     fil_arg_str = 'filter_arg'
+                    fil_eval_str = 'filter_eval'
                     fil_prior_str = 'filter_prior'
 
                 fil_dict = {'Type': row2[fil_type_str], 'Name': row2[fil_name_str],
                             'Group': str(int(row2[fil_group_str])), 'Arg': row2[fil_arg_str],
-                            'Prior': row2[fil_prior_str]}
+                            'Prior': row2[fil_prior_str], 'Eval': row2[fil_eval_str]}
                 filter_list.append(fil_dict)
 
                 if pd.isnull(row2[fil_arg_str]):
