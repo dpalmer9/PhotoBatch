@@ -7,6 +7,7 @@ from datetime import datetime
 from scipy import signal
 import numpy as np
 import pandas as pd
+import h5py
 
 pd.set_option('mode.chained_assignment', None)
 
@@ -16,7 +17,6 @@ class PhotometryData:
     def __init__(self):
 
         # Initialize Folder Path Variables
-        self.curr_cpu_core_count = os.cpu_count()
         self.curr_dir = os.getcwd()
         if sys.platform == 'linux' or sys.platform == 'darwin':
             self.folder_symbol = '/'
@@ -127,16 +127,22 @@ class PhotometryData:
         abet_numpy = np.array(abet_data_list)
         self.abet_pandas = pd.DataFrame(data=abet_numpy, columns=abet_name_list)
 
-    """ load_doric_data - Loads in the doric data to the PhotometryData object. This method uses a
-        simple pandas read csv function to import the data. User specified column indexes are used to grab only
-        the relevant columns.
-         Arguments:
-         filepath = The filepath for the doric photometry csv. Generated from GUI path
-         ch1_col = The column index for the isobestic channel data
-         ch2_col = The column index for the active channel data
-         ttl_col = The column index for the TTL data """
+    def load_doric_data(self,filepath,ch1_col,ch2_col,ttl_col):
+        if '.csv' in filepath:
+            self.load_doric_data_csv(filepath, ch1_col, ch2_col, ttl_col)
+        elif '.doric' in filepath:
+            self.load_doric_data_h5(filepath, ch1_col, ch2_col, ttl_col)
 
-    def load_doric_data(self, filepath, ch1_col, ch2_col, ttl_col):
+    """ load_doric_data - Loads in the doric data to the PhotometryData object. This method uses a
+            simple pandas read csv function to import the data. User specified column indexes are used to grab only
+            the relevant columns.
+             Arguments:
+             filepath = The filepath for the doric photometry csv. Generated from GUI path
+             ch1_col = The column index for the isobestic channel data
+             ch2_col = The column index for the active channel data
+             ttl_col = The column index for the TTL data """
+
+    def load_doric_data_csv(self, filepath, ch1_col, ch2_col, ttl_col):
         self.doric_file_path = filepath
         self.doric_loaded = True
         colnames = ['Time', 'Control', 'Active', 'TTL']
@@ -144,6 +150,10 @@ class PhotometryData:
         self.doric_pandas = doric_data.iloc[:, [0, ch1_col, ch2_col, ttl_col]]
         self.doric_pandas.columns = colnames
         self.doric_pandas = self.doric_pandas.astype('float')
+
+
+    def load_doric_data_h5(self, filepath, ch1_col, ch2_col, ttl_col):
+        return
 
     """ abet_trial_definition - Defines a trial structure for the components of the ABET II unprocessed data.
         This method uses the Item names of Condition Events that represent the normal start and end of a trial epoch.
