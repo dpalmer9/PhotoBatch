@@ -127,7 +127,7 @@ class PhotometryData:
         abet_numpy = np.array(abet_data_list)
         self.abet_pandas = pd.DataFrame(data=abet_numpy, columns=abet_name_list)
 
-    def load_doric_data(self,filepath,ch1_col,ch2_col,ttl_col):
+    def load_doric_data(self, filepath, ch1_col, ch2_col, ttl_col, mode=''):
         if '.csv' in filepath:
             self.load_doric_data_csv(filepath, ch1_col, ch2_col, ttl_col)
         elif '.doric' in filepath:
@@ -142,7 +142,7 @@ class PhotometryData:
              ch2_col = The column index for the active channel data
              ttl_col = The column index for the TTL data """
 
-    def load_doric_data_csv(self, filepath, ch1_col, ch2_col, ttl_col):
+    def load_doric_data_csv(self, filepath, ch1_col, ch2_col, ttl_col, mode=''):
         self.doric_file_path = filepath
         self.doric_loaded = True
         colnames = ['Time', 'Control', 'Active', 'TTL']
@@ -151,8 +151,50 @@ class PhotometryData:
         self.doric_pandas.columns = colnames
         self.doric_pandas = self.doric_pandas.astype('float')
 
+    def load_doric_data_h5(self, filepath, ch1_col, ch2_col, ttl_col, mode=''):
+        doric_h5 = h5py.File(filepath,'r')
 
-    def load_doric_data_h5(self, filepath, ch1_col, ch2_col, ttl_col):
+        doric_dataset = doric_h5['DataAcqusition']['FPConsole']['Signals']['Series0001']
+        dataset_keys = doric_dataset.keys()
+        if mode is 'input_output_no':
+            ch1_col = ch1_col.split(',')
+            ch1_in = str(ch1_col[0])
+            ch1_in = ch1_in.rjust(2,'0')
+            ch1_in = 'AIN' + ch1_in
+            ch1_out = str(ch1_col[1])
+            ch1_out = ch1_out.rjust(2,'0')
+            ch1_out = 'AOUT' + ch1_out
+            ch2_col = ch2_col.split(',')
+            ch2_in = str(ch2_col[0])
+            ch2_in = ch2_in.rjust(2, '0')
+            ch2_in = 'AIN' + ch2_in
+            ch2_out = str(ch2_col[1])
+            ch2_out = ch2_out.rjust(2, '0')
+            ch2_out = 'AOUT' + ch2_out
+            ttl_in = str(ttl_col)
+            ttl_in = ttl_in.rjust(2,'0')
+            ttl_in = 'AIN' + ttl_in
+
+            for key in dataset_keys:
+                if ch1_in in key:
+                    if ch1_out in key:
+                        key_name = ch1_in + 'x' + ch1_out + '-LockIn'
+                        iso_dataset = doric_dataset[key_name]
+                        time_data = iso_dataset['Time']
+                        iso_data = iso_dataset['Values']
+
+                if ch2_in in key:
+                    if ch2_out in key:
+                        key_name = ch2_in + 'x' + ch2_out + '-LockIn'
+                        iso_dataset = doric_dataset[key_name]
+                        act_data = iso_dataset['Values']
+
+            ttl_keys = doric_dataset['AnalogIn'].keys()
+
+            for key in ttl_keys:
+                if ttl_in in key:
+                    return
+
         return
 
     """ abet_trial_definition - Defines a trial structure for the components of the ABET II unprocessed data.
