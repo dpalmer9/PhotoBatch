@@ -79,6 +79,7 @@ class PhotometryData:
         self.abet_pd = pd.DataFrame()
         self.doric_pd = pd.DataFrame()
         self.doric_pandas = pd.DataFrame()
+        self.ttl_pandas = pd.DataFrame()
         self.abet_raw_data = pd.DataFrame()
         self.anymaze_pandas = pd.DataFrame()
         self.abet_pandas = pd.DataFrame()
@@ -101,37 +102,38 @@ class PhotometryData:
         abet_name_list = list()
         event_time_colname = ['Evnt_Time', 'Event_Time']
         colnames_found = False
-        for row in abet_csv_reader:
+        for row_csv in abet_csv_reader:
             if not colnames_found:
-                if len(row) == 0:
+                if len(row_csv) == 0:
                     continue
-                if row[0] == 'Animal ID':
-                    self.animal_id = str(row[1])
+                if row_csv[0] == 'Animal ID':
+                    self.animal_id = str(row_csv[1])
                     continue
-                if row[0] == 'Date/Time':
-                    self.date = str(row[1])
+                if row_csv[0] == 'Date/Time':
+                    self.date = str(row_csv[1])
                     self.date = self.date.replace(':', '-')
                     self.date = self.date.replace('/', '-')
                     continue
-                if row[0] in event_time_colname:
+                if row_csv[0] in event_time_colname:
                     colnames_found = True
-                    self.time_var_name = row[0]
-                    self.event_name_col = row[2]
+                    self.time_var_name = row_csv[0]
+                    self.event_name_col = row_csv[2]
                     # Columns are 0-time, 1-Event ID, 2-Event name, 3-Item Name, 5-Group ID, 8-Arg-1 Value
-                    abet_name_list = [row[0], row[1], row[2], row[3], row[5], row[8]]
+                    abet_name_list = [row_csv[0], row_csv[1], row_csv[2], row_csv[3], row_csv[5], row_csv[8]]
                 else:
                     continue
             else:
-                abet_data_list.append([row[0], row[1], row[2], row[3], row[5], row[8]])
+                abet_data_list.append([row_csv[0], row_csv[1], row_csv[2], row_csv[3], row_csv[5], row_csv[8]])
         abet_file.close()
         abet_numpy = np.array(abet_data_list)
         self.abet_pandas = pd.DataFrame(data=abet_numpy, columns=abet_name_list)
 
     def load_doric_data(self, filepath, ch1_col, ch2_col, ttl_col, mode=''):
+        self.doric_loaded = True
         if '.csv' in filepath:
             self.load_doric_data_csv(filepath, ch1_col, ch2_col, ttl_col)
         elif '.doric' in filepath:
-            self.load_doric_data_h5(filepath, ch1_col, ch2_col, ttl_col)
+            self.load_doric_data_h5(filepath, ch1_col, ch2_col, ttl_col, mode)
 
     """ load_doric_data - Loads in the doric data to the PhotometryData object. This method uses a
             simple pandas read csv function to import the data. User specified column indexes are used to grab only
@@ -140,23 +142,59 @@ class PhotometryData:
              filepath = The filepath for the doric photometry csv. Generated from GUI path
              ch1_col = The column index for the isobestic channel data
              ch2_col = The column index for the active channel data
-             ttl_col = The column index for the TTL data """
+             ttl_col = The column index for the TTL data
+             mode = Specifies the mode of data definition. col_index indicates that the python column indexes are used. col_name indicates
+             the name of the data column is used. input_output_no indicates that two numbers separated by comma are indicating the analog input
+             and output from the lockin method (single number to denote non-lockin for ttl)"""
 
     def load_doric_data_csv(self, filepath, ch1_col, ch2_col, ttl_col, mode=''):
         self.doric_file_path = filepath
-        self.doric_loaded = True
-        colnames = ['Time', 'Control', 'Active', 'TTL']
-        doric_data = pd.read_csv(self.doric_file_path, header=1)
-        self.doric_pandas = doric_data.iloc[:, [0, ch1_col, ch2_col, ttl_col]]
-        self.doric_pandas.columns = colnames
+
+        doric_colnames = ['Time', 'Control', 'Active']
+        ttl_colnames = ['Time', 'TTL']
+        print(mode)
+        if mode == 'col_index':
+            doric_data = pd.read_csv(self.doric_file_path, header=1)
+            self.doric_pandas = doric_data.iloc[:, [0, ch1_col, ch2_col]]
+            self.ttl_pandas = doric_data.iloc[:, [0, ttl_col]]
+        elif mode == 'input_output_no':
+            doric_data = pd.read_csv(self.doric_file_path, header=0, skiprows=[1])
+            doric_cols = doric_data.columns
+            doric_cols = doric_cols.tolist()
+            ch1_col = ch1_col.split(',')
+            if ch1_col[1] == '1':
+                iso_str = 'Analog In. | Ch.' + ch1_col[0]
+            else:
+                ch1_col[1] = str(int(ch1_col[1]) - 1)
+                ch1_col = '.'.join(ch1_col)
+                iso_str = 'Analog In. | Ch.' + ch1_col
+            if ch2_col[1] == '1':
+                act_str = 'Analog In. | Ch.' + ch2_col[0]
+            else:
+                ch2_col[1] = str(int(ch2_col[1]) - 1)
+                ch2_col = '.'.join(ch2_col)
+                act_str = 'Analog In. | Ch.' + ch2_col
+            ttl_str = 'Analog In. | Ch.' + str(ttl_col)
+            iso_col_index = doric_cols.index(iso_str)
+            act_col_index = doric_cols.index(act_str)
+            ttl_col_index = doric_cols.index(ttl_str)
+            self.doric_pandas = doric_data.iloc[:, [0, iso_col_index, act_col_index]]
+            self.ttl_pandas = doric_data.iloc[:, [0, ttl_col_index]]
+
+
+
+        self.doric_pandas.columns = doric_colnames
+        self.ttl_pandas.columns = ttl_colnames
         self.doric_pandas = self.doric_pandas.astype('float')
+        self.ttl_pandas = self.ttl_pandas.astype('float')
 
     def load_doric_data_h5(self, filepath, ch1_col, ch2_col, ttl_col, mode=''):
-        doric_h5 = h5py.File(filepath,'r')
+        self.doric_file_path = filepath
+        doric_h5 = h5py.File(self.doric_file_path,'r')
 
-        doric_dataset = doric_h5['DataAcqusition']['FPConsole']['Signals']['Series0001']
+        doric_dataset = doric_h5['DataAcquisition']['FPConsole']['Signals']['Series0001']
         dataset_keys = doric_dataset.keys()
-        if mode is 'input_output_no':
+        if mode == 'input_output_no':
             ch1_col = ch1_col.split(',')
             ch1_in = str(ch1_col[0])
             ch1_in = ch1_in.rjust(2,'0')
@@ -179,21 +217,32 @@ class PhotometryData:
                 if ch1_in in key:
                     if ch1_out in key:
                         key_name = ch1_in + 'x' + ch1_out + '-LockIn'
-                        iso_dataset = doric_dataset[key_name]
-                        time_data = iso_dataset['Time']
+                        iso_dataset = doric_dataset[key]
+                        lock_time = iso_dataset['Time']
+                        lock_time = np.array(lock_time)
                         iso_data = iso_dataset['Values']
+                        iso_data = np.array(iso_data)
 
                 if ch2_in in key:
                     if ch2_out in key:
                         key_name = ch2_in + 'x' + ch2_out + '-LockIn'
-                        iso_dataset = doric_dataset[key_name]
-                        act_data = iso_dataset['Values']
+                        act_dataset = doric_dataset[key]
+                        act_data = act_dataset['Values']
+                        act_data = np.array(act_data)
 
             ttl_keys = doric_dataset['AnalogIn'].keys()
 
             for key in ttl_keys:
                 if ttl_in in key:
-                    return
+                    ttl_time = doric_dataset['AnalogIn']['Time']
+                    ttl_time = np.array(ttl_time)
+                    ttl_data = doric_dataset['AnalogIn'][key]
+                    ttl_data = np.array(ttl_data)
+
+            self.doric_pandas = pd.DataFrame({'Time': lock_time, 'Control': iso_data, 'Active': act_data})
+            self.ttl_pandas = pd.DataFrame({'Time': ttl_time, 'TTL': ttl_data})
+            self.doric_pandas = self.doric_pandas.astype('float')
+            self.ttl_pandas = self.ttl_pandas.astype('float')
 
         return
 
@@ -292,6 +341,7 @@ class PhotometryData:
                     sub_index = sub_values.abs().idxmin(skipna=True)
                     sub_null = sub_values.isnull().sum()
                     if sub_null >= sub_values.size:
+                        event_data[index] = np.nan
                         continue
 
                     filter_value = filter_event_abet.loc[sub_index, 'Item_Name']
@@ -396,7 +446,7 @@ class PhotometryData:
         if not self.doric_loaded:
             return None
         try:
-            doric_ttl_active = self.doric_pandas.loc[(self.doric_pandas['TTL'] > 1.00), ]
+            doric_ttl_active = self.ttl_pandas.loc[(self.ttl_pandas['TTL'] >= 1.00), ]
         except KeyError:
             print('No TTL Signal Detected. Ending Analysis.')
             return
@@ -1049,11 +1099,12 @@ for row_index, row in file_csv.iterrows():
     ctrl_col_index = row.loc['ctrl_col_num']
     active_col_index = row.loc['act_col_num']
     ttl_col_index = row.loc['ttl_col_num']
+    fp_mode = row.loc['mode']
 
     animal_id, date, schedule = abet_extract_information(abet_path)
 
     analyzer.load_abet_data(abet_path)
-    analyzer.load_doric_data(doric_path, ctrl_col_index, active_col_index, ttl_col_index)
+    analyzer.load_doric_data(doric_path, ctrl_col_index, active_col_index, ttl_col_index, fp_mode)
     analyzer.abet_trial_definition(start_group_name, end_group_name)
 
     analyzer.abet_doric_synchronize()
