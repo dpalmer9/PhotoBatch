@@ -1,5 +1,4 @@
 abet_path,doric_path,ctrl_col_num,act_col_num,ttl_col_num,mode
 C:\Users\dpalmer\Documents\PVCPTCohort3\ABET\FP15\TCNLAB5_TD-CPT-FP2_Mouse ICPT Stage 3 Var ITI v1 HORIZONTAL FP_3.csv,C:\Users\dpalmer\Documents\PVCPTCohort3\FP13\Jan 13 - 2022\TD-CPT-M15 and 17-Stage 3-1_0.csv,1,2,4,col_index
 C:\Users\dpalmer\Documents\PVCPTCohort3\ABET\FP15\TCNLAB5_TD-CPT-FP2_Mouse ICPT Stage 3 Var ITI v1 HORIZONTAL FP_82.csv,C:\Users\dpalmer\Documents\PVCPTCohort3\FP13\Jan 27 - 2022\TD-CPT-15 and 17 - Stage 3-10_0.csv,1,2,4,col_index
-,,,,,col_name
-,,,,,input_output_no
+,,"1,1","1,2",2,input_output_no
