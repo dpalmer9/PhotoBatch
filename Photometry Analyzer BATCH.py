@@ -131,7 +131,7 @@ class PhotometryData:
     def load_doric_data(self, filepath, ch1_col, ch2_col, ttl_col, mode=''):
         self.doric_loaded = True
         if '.csv' in filepath:
-            self.load_doric_data_csv(filepath, ch1_col, ch2_col, ttl_col)
+            self.load_doric_data_csv(filepath, ch1_col, ch2_col, ttl_col, mode)
         elif '.doric' in filepath:
             self.load_doric_data_h5(filepath, ch1_col, ch2_col, ttl_col, mode)
 
