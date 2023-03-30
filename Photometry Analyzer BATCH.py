@@ -155,8 +155,8 @@ class PhotometryData:
         print(mode)
         if mode == 'col_index':
             doric_data = pd.read_csv(self.doric_file_path, header=1)
-            self.doric_pandas = doric_data.iloc[:, [0, ch1_col, ch2_col]]
-            self.ttl_pandas = doric_data.iloc[:, [0, ttl_col]]
+            self.doric_pandas = doric_data.iloc[:, [0, int(ch1_col), int(ch2_col)]]
+            self.ttl_pandas = doric_data.iloc[:, [0, int(ttl_col)]]
         elif mode == 'input_output_no':
             doric_data = pd.read_csv(self.doric_file_path, header=0, skiprows=[1])
             doric_cols = doric_data.columns
