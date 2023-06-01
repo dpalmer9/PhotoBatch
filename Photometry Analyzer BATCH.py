@@ -1023,15 +1023,21 @@ class PhotometryData:
         if output_data in p_list:
             session_temp = self.partial_percent.transpose()
 
-        session_mean = session_temp.mean(axis=1, skipna=True)
+        session_mean = session_temp.mean(axis=0, skipna=True)
         session_mean = [session_string] + session_mean.tolist()
         session_mean = pd.Series(session_mean)
-        session_std = session_temp.std(axis=1, skipna=True)
+        session_mean = pd.DataFrame(session_mean)
+        session_mean = session_mean.transpose()
+        session_std = session_temp.std(axis=0, skipna=True)
         session_std = [session_string] + session_std.tolist()
         session_std = pd.Series(session_std)
-        session_sem = session_temp.sem(axis=1, skipna=True)
+        session_std = pd.DataFrame(session_std)
+        session_std = session_std.transpose()
+        session_sem = session_temp.sem(axis=0, skipna=True)
         session_sem = [session_string] + session_sem.tolist()
         session_sem = pd.Series(session_sem)
+        session_sem = pd.DataFrame(session_sem)
+        session_sem = session_sem.transpose()
 
 
         if os.path.exists(summary_path):
@@ -1039,21 +1045,24 @@ class PhotometryData:
             xlsx_mean = summary_xlsx.get('Mean')
             xlsx_std = summary_xlsx.get('Std')
             xlsx_sem = summary_xlsx.get('Sem')
-
-            xlsx_mean = xlsx_mean.append(session_mean, ignore_index=True)
-            xlsx_std = xlsx_std.append(session_std, ignore_index=True)
-            xlsx_sem = xlsx_sem.append(session_sem, ignore_index=True)
+            
+            xlsx_mean = pd.concat([xlsx_mean,session_mean])
+            xlsx_std = pd.concat([xlsx_std,session_std])
+            xlsx_sem = pd.concat([xlsx_sem,session_sem])
 
         else:
 
-            xlsx_mean = pd.DataFrame(session_mean)
-            xlsx_std = pd.DataFrame(session_std)
-            xlsx_sem = pd.DataFrame(session_sem)
+            xlsx_mean = session_mean
+            xlsx_std = session_std
+            xlsx_sem = session_sem
 
         with pd.ExcelWriter(summary_path) as writer:
-            xlsx_mean.to_excel(writer, sheet_name='Mean')
-            xlsx_std.to_excel(writer, sheet_name='Std')
-            xlsx_sem.to_excel(writer, sheet_name='Sem')
+            xlsx_mean.to_excel(writer, sheet_name='Mean', header=False, 
+                               index=False)
+            xlsx_std.to_excel(writer, sheet_name='Std', header=False, 
+                               index=False)
+            xlsx_sem.to_excel(writer, sheet_name='Sem', header=False, 
+                               index=False)
 
 
 
@@ -1124,6 +1133,9 @@ run_timedp = int(config_file['Output']['create_timedp'])
 run_simplef = int(config_file['Output']['create_simplef'])
 run_timedf = int(config_file['Output']['create_timedf'])
 run_raw = int(config_file['Output']['create_raw'])
+run_summaryz = int(config_file['Output']['create_summaryz'])
+run_summaryf = int(config_file['Output']['create_summaryf'])
+run_summaryp = int(config_file['Output']['create_summaryp'])
 
 center_z_on_iti = int(config_file['ITI_Window']['center_z_on_iti'])
 if center_z_on_iti == 1:
@@ -1248,6 +1260,15 @@ for row_index, row in file_csv.iterrows():
             analyzer.write_data('SimpleF', filename_override=file_dir)
         if run_timedf == 1:
             analyzer.write_data('TimedF', filename_override=file_dir)
+        if run_summaryz == 1:
+            analyzer.write_summary('SummaryZ', summary_string, output_path, 
+                                   file_string)
+        if run_summaryf == 1:
+            analyzer.write_summary('SummaryF', summary_string, output_path, 
+                                   file_string)
+        if run_summaryp == 1:
+            analyzer.write_summary('SummaryP', summary_string, output_path, 
+                                   file_string)
         if run_raw == 1 and not raw_processed:
             file_path_raw = output_path + animal_id + '-' + schedule + '-' + date
             analyzer.write_data('Full', filename_override=file_path_raw)
