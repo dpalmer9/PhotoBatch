@@ -1008,6 +1008,55 @@ class PhotometryData:
         elif output_data in finalp_list:
             self.final_percent.to_csv(file_path_string, index=False)
 
+    def write_summary(self, output_data, summary_string, output_path, session_string):
+
+        summary_path = output_path + summary_string + 'Summary' + '-' + output_data + '-' +'.xlsx'
+
+        z_list = ['SummaryZ','summaryz']
+        f_list = ['SummaryF', 'summaryf']
+        p_list = ['SummaryP', 'summaryp']
+
+        if output_data in z_list:
+            session_temp = self.partial_dataframe.transpose()
+        if output_data in f_list:
+            session_temp = self.partial_deltaf.transpose()
+        if output_data in p_list:
+            session_temp = self.partial_percent.transpose()
+
+        session_mean = session_temp.mean(axis=1, skipna=True)
+        session_mean = [session_string] + session_mean.tolist()
+        session_mean = pd.Series(session_mean)
+        session_std = session_temp.std(axis=1, skipna=True)
+        session_std = [session_string] + session_std.tolist()
+        session_std = pd.Series(session_std)
+        session_sem = session_temp.sem(axis=1, skipna=True)
+        session_sem = [session_string] + session_sem.tolist()
+        session_sem = pd.Series(session_sem)
+
+
+        if os.path.exists(summary_path):
+            summary_xlsx = pd.read_excel(summary_path, sheet_name=None, header=None)
+            xlsx_mean = summary_xlsx.get('Mean')
+            xlsx_std = summary_xlsx.get('Std')
+            xlsx_sem = summary_xlsx.get('Sem')
+
+            xlsx_mean = xlsx_mean.append(session_mean, ignore_index=True)
+            xlsx_std = xlsx_std.append(session_std, ignore_index=True)
+            xlsx_sem = xlsx_sem.append(session_sem, ignore_index=True)
+
+        else:
+
+            xlsx_mean = pd.DataFrame(session_mean)
+            xlsx_std = pd.DataFrame(session_std)
+            xlsx_sem = pd.DataFrame(session_sem)
+
+        with pd.ExcelWriter(summary_path) as writer:
+            xlsx_mean.to_excel(writer, sheet_name='Mean')
+            xlsx_std.to_excel(writer, sheet_name='Std')
+            xlsx_sem.to_excel(writer, sheet_name='Sem')
+
+
+
 
 # Functions
 def abet_extract_information(abet_file_path):
@@ -1123,9 +1172,11 @@ for row_index, row in file_csv.iterrows():
 
         if row2['num_filter'] == 0:
             file_string = animal_id + '-' + schedule + '-' + row2.loc['event_name'] + '-' + date
+            summary_string = schedule + '-' + row2.loc['event_name'] + '-'
             file_dir = output_path + file_string
         elif row2['num_filter'] >= 1:
             file_string = animal_id + '-' + schedule + '-' + row2.loc['event_name'] + '-'
+            summary_string = schedule + '-' + row2.loc['event_name'] + '-'
             for fil in range(0, row2['num_filter']):
                 if fil == 0:
                     fil_mod = ''
@@ -1154,8 +1205,10 @@ for row_index, row in file_csv.iterrows():
 
                 if pd.isnull(row2[fil_arg_str]):
                     file_string = file_string + row2.loc[fil_name_str] + '-'
+                    summary_string = summary_string + row2.loc[fil_name_str] + '-'
                 else:
                     file_string = file_string + row2.loc[fil_name_str] + '-' + str(row2.loc[fil_arg_str]) + '-'
+                    summary_string = summary_string + row2.loc[fil_name_str] + '-' + str(row2.loc[fil_arg_str]) + '-'
             file_string = file_string + date
             file_dir = output_path + file_string
         if os.path.exists(file_dir):
