@@ -446,7 +446,7 @@ class PhotometryData:
         if not self.doric_loaded:
             return None
         try:
-            doric_ttl_active = self.ttl_pandas.loc[(self.ttl_pandas['TTL'] >= 1.00), ]
+            doric_ttl_active = self.ttl_pandas.loc[(self.ttl_pandas['TTL'] >= 3.00), ]
         except KeyError:
             print('No TTL Signal Detected. Ending Analysis.')
             return
