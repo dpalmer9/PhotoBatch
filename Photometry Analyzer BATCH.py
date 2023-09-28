@@ -40,6 +40,7 @@ class PhotometryData:
         self.abet_searched = False
         self.anymaze_loaded = False
         self.doric_loaded = False
+        self.abet_gen2_session = False
 
         # Initialize Numeric Variables
 
@@ -102,6 +103,7 @@ class PhotometryData:
         abet_name_list = list()
         event_time_colname = ['Evnt_Time', 'Event_Time']
         colnames_found = False
+        self.abet_gen2_session = False
         for row_csv in abet_csv_reader:
             if not colnames_found:
                 if len(row_csv) == 0:
@@ -114,6 +116,8 @@ class PhotometryData:
                     self.date = self.date.replace(':', '-')
                     self.date = self.date.replace('/', '-')
                     continue
+                if row_csv[0] == "**UniqueSID**":
+                    self.abet_gen2_session = True
                 if row_csv[0] in event_time_colname:
                     colnames_found = True
                     self.time_var_name = row_csv[0]
@@ -445,20 +449,39 @@ class PhotometryData:
             return None
         if not self.doric_loaded:
             return None
+
         try:
             doric_ttl_active = self.ttl_pandas.loc[(self.ttl_pandas['TTL'] >= 3.00), ]
         except KeyError:
             print('No TTL Signal Detected. Ending Analysis.')
             return
+
+        doric_time = doric_ttl_active.iloc[0, 0]
+        doric_time = doric_time.astype(float)
+        doric_time = doric_time.item(0)
+
+        if self.abet_gen2_session:
+            try:
+                doric_ttl_low = doric_ttl_active = self.ttl_pandas.loc[(self.ttl_pandas['TTL'] >= 2.00), ]
+            except KeyError:
+                print('No TTL Signal Detected. Ending Analysis.')
+                return
+            doric_ttl_low = doric_ttl_low.iloc[0,0]
+            doric_ttl_low = doric_ttl_low.astype(float)
+            doric_ttl_low = doric_ttl_low.item(0)
+            doric_true_space = doric_time - doric_ttl_low
+            system_index = self.abet_pandas.index[self.abet_pandas['Evnt_ID'] == 10003].tolist()
+            system_index = system_index[-1]
+            abet_rows = self.abet_pandas.shape[0]
+            self.abet_pandas.loc[system_index:abet_rows,'Evnt_Time'] = self.abet_pandas.loc[system_index:abet_rows,
+                                                                       'Evnt_Time'] + doric_true_space
+
         try:
             abet_ttl_active = self.abet_pandas.loc[(self.abet_pandas['Item_Name'] == 'TTL #1'), ]
         except KeyError:
             print('ABET II File missing TTL Pulse Output. Ending Analysis.')
             return
 
-        doric_time = doric_ttl_active.iloc[0, 0]
-        doric_time = doric_time.astype(float)
-        doric_time = doric_time.item(0)
         abet_time = abet_ttl_active.iloc[0, 0]
         abet_time = float(abet_time)
 
