@@ -473,8 +473,9 @@ class PhotometryData:
             system_index = self.abet_pandas.index[self.abet_pandas['Evnt_ID'] == 10003].tolist()
             system_index = system_index[-1]
             abet_rows = self.abet_pandas.shape[0]
-            self.abet_pandas.loc[system_index:abet_rows,'Evnt_Time'] = self.abet_pandas.loc[system_index:abet_rows,
-                                                                       'Evnt_Time'] + doric_true_space
+            abet_adjust_times = self.abet_pandas.loc[system_index:abet_rows, 'Evnt_Time']
+            abet_adjust_times = pd.to_numeric(abet_adjust_times)
+            self.abet_pandas.loc[system_index:abet_rows, 'Evnt_Time'] = abet_adjust_times + doric_true_space
 
         try:
             abet_ttl_active = self.abet_pandas.loc[(self.abet_pandas['Item_Name'] == 'TTL #1'), ]
