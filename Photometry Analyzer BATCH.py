@@ -451,7 +451,7 @@ class PhotometryData:
             return None
 
         try:
-            doric_ttl_active = self.ttl_pandas.loc[(self.ttl_pandas['TTL'] >= 3.00), ]
+            doric_ttl_active = self.ttl_pandas.loc[(self.ttl_pandas['TTL'] >= 4.00), ]
         except KeyError:
             print('No TTL Signal Detected. Ending Analysis.')
             return
@@ -459,23 +459,24 @@ class PhotometryData:
         doric_time = doric_ttl_active.iloc[0, 0]
         doric_time = doric_time.astype(float)
         doric_time = doric_time.item(0)
+        doric_ttl_lag = 0
 
         if self.abet_gen2_session:
             try:
-                doric_ttl_low = doric_ttl_active = self.ttl_pandas.loc[(self.ttl_pandas['TTL'] >= 2.00), ]
+                doric_ttl_low = doric_ttl_active = self.ttl_pandas.loc[(self.ttl_pandas['TTL'] >= 2.00) & (self.ttl_pandas['TTL'] < 3.00), ]
             except KeyError:
                 print('No TTL Signal Detected. Ending Analysis.')
                 return
             doric_ttl_low = doric_ttl_low.iloc[0,0]
             doric_ttl_low = doric_ttl_low.astype(float)
             doric_ttl_low = doric_ttl_low.item(0)
-            doric_true_space = doric_time - doric_ttl_low
-            system_index = self.abet_pandas.index[self.abet_pandas['Evnt_ID'] == 10003].tolist()
+            doric_ttl_lag = doric_time - doric_ttl_low
+            system_index = self.abet_pandas.index[self.abet_pandas['Evnt_ID'] == "10003"].tolist()
             system_index = system_index[-1]
             abet_rows = self.abet_pandas.shape[0]
             abet_adjust_times = self.abet_pandas.loc[system_index:abet_rows, 'Evnt_Time']
             abet_adjust_times = pd.to_numeric(abet_adjust_times)
-            self.abet_pandas.loc[system_index:abet_rows, 'Evnt_Time'] = abet_adjust_times + doric_true_space
+            self.abet_pandas.loc[system_index:abet_rows, 'Evnt_Time'] = abet_adjust_times + doric_ttl_lag
 
         try:
             abet_ttl_active = self.abet_pandas.loc[(self.abet_pandas['Item_Name'] == 'TTL #1'), ]
@@ -1190,9 +1191,8 @@ for row_index, row in file_csv.iterrows():
 
     analyzer.load_abet_data(abet_path)
     analyzer.load_doric_data(doric_path, ctrl_col_index, active_col_index, ttl_col_index, fp_mode)
-    analyzer.abet_trial_definition(start_group_name, end_group_name)
-
     analyzer.abet_doric_synchronize()
+    analyzer.abet_trial_definition(start_group_name, end_group_name)
 
     analyzer.doric_process(filter_frequency=filter_frequency)
 
