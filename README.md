@@ -5,6 +5,28 @@ Currently, this is Legacy Code that supports ABET II raw output and Doric Lenses
 
 Example templates are presented for file and event sheets.
 
+# Requirements
+
+## PC Requirements
+Photobatch can run on any system that a standard Python 3 install can be run on. This will include Windows, Linux, and Mac OS operating systems. There is no hard requirement on CPU, however CPU's with higher clock speed and core count will have faster performance.
+
+## Software Requirements
+
+### Python
+Photobatch requires an installation of Python 3.8 or newer. For simplier installation and usage, it is highly reccomended that users download the Anaconda distribution of Python 3, as most of the Python packages that are required will be included with the installation.
+
+### Python packages
+Photobatch requires the following packages:
+Numpy
+Scipy
+Pandas
+H5Py
+
+These can be installed with the following code from the command prompt (Windows) or terminal (Linux, Mac OS):
+
+```
+  py -m pip install numpy scipy pandas h5py
+```
 
 # Config File Settings
 ## Filepath
