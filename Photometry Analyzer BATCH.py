@@ -192,27 +192,47 @@ class PhotometryData:
         self.doric_file_path = filepath
         doric_h5 = h5py.File(self.doric_file_path,'r')
 
-        doric_dataset = doric_h5['DataAcquisition']['FPConsole']['Signals']['Series0001']
-        dataset_keys = doric_dataset.keys()
-        if mode == 'input_output_no':
-            ch1_col = ch1_col.split(',')
-            ch1_in = str(ch1_col[0])
-            ch1_in = ch1_in.rjust(2,'0')
-            ch1_in = 'AIN' + ch1_in
-            ch1_out = str(ch1_col[1])
-            ch1_out = ch1_out.rjust(2,'0')
-            ch1_out = 'AOUT' + ch1_out
-            ch2_col = ch2_col.split(',')
-            ch2_in = str(ch2_col[0])
-            ch2_in = ch2_in.rjust(2, '0')
-            ch2_in = 'AIN' + ch2_in
-            ch2_out = str(ch2_col[1])
-            ch2_out = ch2_out.rjust(2, '0')
-            ch2_out = 'AOUT' + ch2_out
-            ttl_in = str(ttl_col)
-            ttl_in = ttl_in.rjust(2,'0')
-            ttl_in = 'AIN' + ttl_in
-
+        try:
+            software_version = doric_h5[''].attrs['SoftwareVersion']
+        except KeyError:
+            software_version = '5'
+        
+        if software_version == ('6.3.1.0' or '6.3.2.0'):
+            doric_dataset = ['DataAcquisition']['FPConsole']['Signals']['Series0001']
+            dataset_keys = doric_dataset.keys()
+            if mode == 'input_output_no':
+                ch1_in = 'AIN' + str(ch1_col).split(',')[0].rjust(2,'0')
+                ch1_out = 'LockInAOUT' + str(ch1_col).split(',')[1].rjust(2,'0')
+                ch2_in = 'AIN' + str(ch2_col).split(',')[0].rjust(2,'0')
+                ch2_out = 'LockInAOUT' + str(ch2_col).split(',')[1].rjust(2,'0')
+                ttl_in = 'AIN' + str(ttl_col).rjust(2,'0')
+            
+            for key in dataset_keys:
+                if ch1_out in key:
+                    key_data = doric_dataset[ch1_out]
+                    if ch1_in in key_data.keys():
+                        lock_time = np.array(key_data['Time'])
+                        iso_data = np.array(key_data[ch1_in])
+                
+                if ch2_out in key:
+                    key_data = doric_dataset[ch2_out]
+                    if ch2_in in key_data.keys():
+                        act_data = np.array(key_data[ch2_in])
+            
+            for key in doric_dataset['AnalogIn'].keys():
+                if ttl_in in key:
+                    ttl_time = np.array(doric_dataset['AnalogIn']['Time'])
+                    ttl_data = np.array(doric_dataset['AnalogIn'][ttl_in])
+        elif software_version == ('6.1.5.0'):
+            doric_dataset = ['DataAcquisition']['FPConsole']['Signals']['Series0001']
+            dataset_keys = doric_dataset.keys()
+            if mode == 'input_output_no':
+                ch1_in = 'AIN' + str(ch1_col).split(',')[0].rjust(2,'0')
+                ch1_out = 'LockInAOUT' + str(ch1_col).split(',')[1].rjust(2,'0')
+                ch2_in = 'AIN' + str(ch2_col).split(',')[0].rjust(2,'0')
+                ch2_out = 'LockInAOUT' + str(ch2_col).split(',')[1].rjust(2,'0')
+                ttl_in = 'AIN' + str(ttl_col).rjust(2,'0')
+            
             for key in dataset_keys:
                 if ch1_in in key:
                     if ch1_out in key:
@@ -238,7 +258,34 @@ class PhotometryData:
                     ttl_time = np.array(ttl_time)
                     ttl_data = doric_dataset['AnalogIn'][key]
                     ttl_data = np.array(ttl_data)
-
+        elif software_version == ('6.2.5.0'):
+            print('The HDF5 File contains unresolvable Time Series Data, moving to next session')
+            return
+            #doric_dataset = ['DataAcquisition']['FPConsole']['Signals']['Series0001']
+            #dataset_keys = doric_dataset.keys()
+            #if mode == 'input_output_no':
+                #ch1_in = 'AIN' + str(ch1_col).split(',')[0].rjust(2,'0')
+                #ch1_out = 'LockInAOUT' + str(ch1_col).split(',')[1].rjust(2,'0')
+                #ch2_in = 'AIN' + str(ch2_col).split(',')[0].rjust(2,'0')
+                #ch2_out = 'LockInAOUT' + str(ch2_col).split(',')[1].rjust(2,'0')
+                #ttl_in = 'AIN' + str(ttl_col).rjust(2,'0')
+                
+            #for key in dataset_keys:
+                #if ch1_out in key:
+                    #key_data = doric_dataset[ch1_out]
+                    #if ch1_in in key_data.keys():
+                        #de_sync_time = key_data['Time']
+                        #iso_data = np.array(key_data[ch1_in])
+                        
+                #if ch2_out in key:
+                    #key_data = doric_dataset[ch2_out]
+                    #if ch2_in in key_data.keys():
+                        #iso_data = np.array(key_data[ch2_in])
+                        
+                        
+                            
+                        
+            
             self.doric_pandas = pd.DataFrame({'Time': lock_time, 'Control': iso_data, 'Active': act_data})
             self.ttl_pandas = pd.DataFrame({'Time': ttl_time, 'TTL': ttl_data})
             self.doric_pandas = self.doric_pandas.astype('float')
