@@ -537,7 +537,7 @@ class PhotometryData:
         trial_iti_pad = How long in the pre-trial time space for normalization
         center_method = Determine whether median or mean is used to generate z-values"""
 
-    def trial_separator(self, whole_trial_normalize=True, normalize_side='Left', trial_definition=False,
+    def trial_separator(self, trial_normalize='whole', normalize_side='Left', trial_definition=False,
                         trial_iti_pad=0,
                         center_method='mean'):
         if not self.abet_loaded:
@@ -586,7 +586,7 @@ class PhotometryData:
                 z_mean = np.empty([1, 1])
                 z_sd = np.empty([1, 1])
 
-                if not whole_trial_normalize:
+                if not trial_normalize:
                     if normalize_side in left_selection_list:
                         norm_end_time = self.abet_time_list.loc[index, 'Start_Time'] + trial_iti_pad
                         iti_deltaf = trial_deltaf.loc[
@@ -725,7 +725,7 @@ class PhotometryData:
                     end_index -= 1
 
                 trial_deltaf = self.doric_pd.iloc[start_index:end_index]
-                if center_z_on_iti == 1:
+                if trial_normalize == 'iti':
                     if normalize_side in left_selection_list:
                         trial_start_index_diff = self.trial_definition_times.loc[:, 'Start_Time'].sub(
                             (self.abet_time_list.loc[index, 'Start_Time'] + self.extra_prior))  # .abs().idxmin()
@@ -750,7 +750,22 @@ class PhotometryData:
                         z_mean = iti_data.median()
                         z_dev = np.absolute(np.subtract(iti_data, z_mean))
                         z_sd = z_dev.median()
-                else:
+                elif trial_normalize == 'prior':
+                    if normalize_side in left_selection_list:
+                        baseline_data = trial_deltaf.loc[(trial_deltaf['Time'] >= self.abet_time_list.loc[index, 'Start_Time']) & 
+                                                         (trial_deltaf['Time'] <= (self.abet_time_list.loc[index, 'Start_Time']) + self.extra_prior), 'DeltaF']
+                    else:
+                        baseline_data = trial_deltaf.loc[((trial_deltaf['Time'] >= self.abet_time_list.loc[index, 'End_Time']) - self.extra_follow) & 
+                                                         (trial_deltaf['Time'] <= self.abet_time_list.loc[index, 'End_Time']), 'DeltaF']
+
+                    if center_method == 'mean':
+                        z_mean = iti_data.mean()
+                        z_sd = iti_data.std()
+                    elif center_method == 'median':
+                        z_mean = iti_data.median()
+                        z_dev = np.absolute(np.subtract(iti_data, z_mean))
+                        z_sd = z_dev.median()
+                elif trial_normalize == 'whole':
                     deltaf_split = trial_deltaf.loc[:, 'DeltaF']
                     if center_method == 'mean':
                         z_mean = deltaf_split.mean()
@@ -1160,13 +1175,8 @@ run_summaryz = int(config_file['Output']['create_summaryz'])
 run_summaryf = int(config_file['Output']['create_summaryf'])
 run_summaryp = int(config_file['Output']['create_summaryp'])
 
-center_z_on_iti = int(config_file['ITI_Window']['center_z_on_iti'])
-if center_z_on_iti == 1:
-    whole_trial_normalize = True
-elif center_z_on_iti == 0:
-    whole_trial_normalize = False
-else:
-    whole_trial_normalize = True
+#center_z_on_iti = int(config_file['ITI_Window']['center_z_on_iti'])
+center_z = str(config_file['ITI_Window']['center_z_on_iti']) # iti, prior, whole
 center_method = config_file['ITI_Window']['center_method']
 
 exclusion_list = config_file['Filter']['exclusion_list']
@@ -1268,7 +1278,7 @@ for row_index, row in file_csv.iterrows():
             print('no events located')
             continue
 
-        analyzer.trial_separator(whole_trial_normalize=whole_trial_normalize, trial_definition=1,
+        analyzer.trial_separator(trial_normalize=center_z, trial_definition=1,
                                  trial_iti_pad=iti_prior, center_method=center_method)
 
         if run_simplez == 1:
