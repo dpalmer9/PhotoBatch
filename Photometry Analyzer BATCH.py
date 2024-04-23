@@ -260,31 +260,7 @@ class PhotometryData:
                     ttl_data = np.array(ttl_data)
         elif software_version == ('6.2.5.0',''):
             print('The HDF5 File contains unresolvable Time Series Data, moving to next session')
-            return
-            #doric_dataset = ['DataAcquisition']['FPConsole']['Signals']['Series0001']
-            #dataset_keys = doric_dataset.keys()
-            #if mode == 'input_output_no':
-                #ch1_in = 'AIN' + str(ch1_col).split(',')[0].rjust(2,'0')
-                #ch1_out = 'LockInAOUT' + str(ch1_col).split(',')[1].rjust(2,'0')
-                #ch2_in = 'AIN' + str(ch2_col).split(',')[0].rjust(2,'0')
-                #ch2_out = 'LockInAOUT' + str(ch2_col).split(',')[1].rjust(2,'0')
-                #ttl_in = 'AIN' + str(ttl_col).rjust(2,'0')
-                
-            #for key in dataset_keys:
-                #if ch1_out in key:
-                    #key_data = doric_dataset[ch1_out]
-                    #if ch1_in in key_data.keys():
-                        #de_sync_time = key_data['Time']
-                        #iso_data = np.array(key_data[ch1_in])
-                        
-                #if ch2_out in key:
-                    #key_data = doric_dataset[ch2_out]
-                    #if ch2_in in key_data.keys():
-                        #iso_data = np.array(key_data[ch2_in])
-                        
-                        
-                            
-                        
+            return         
             
             self.doric_pandas = pd.DataFrame({'Time': lock_time, 'Control': iso_data, 'Active': act_data})
             self.ttl_pandas = pd.DataFrame({'Time': ttl_time, 'TTL': ttl_data})
