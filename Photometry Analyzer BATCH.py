@@ -258,7 +258,7 @@ class PhotometryData:
                     ttl_time = np.array(ttl_time)
                     ttl_data = doric_dataset['AnalogIn'][key]
                     ttl_data = np.array(ttl_data)
-        elif software_version == ('6.2.5.0'):
+        elif software_version == ('6.2.5.0',''):
             print('The HDF5 File contains unresolvable Time Series Data, moving to next session')
             return
             #doric_dataset = ['DataAcquisition']['FPConsole']['Signals']['Series0001']
