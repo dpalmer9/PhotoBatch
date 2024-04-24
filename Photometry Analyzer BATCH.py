@@ -198,7 +198,7 @@ class PhotometryData:
             software_version = '5'
         
         if software_version == ('6.3.1.0' or '6.3.2.0'):
-            doric_dataset = ['DataAcquisition']['FPConsole']['Signals']['Series0001']
+            doric_dataset = doric_h5['DataAcquisition']['FPConsole']['Signals']['Series0001']
             dataset_keys = doric_dataset.keys()
             if mode == 'input_output_no':
                 ch1_in = 'AIN' + str(ch1_col).split(',')[0].rjust(2,'0')
@@ -224,7 +224,7 @@ class PhotometryData:
                     ttl_time = np.array(doric_dataset['AnalogIn']['Time'])
                     ttl_data = np.array(doric_dataset['AnalogIn'][ttl_in])
         elif software_version == ('6.1.5.0'):
-            doric_dataset = ['DataAcquisition']['FPConsole']['Signals']['Series0001']
+            doric_dataset = doric_h5['DataAcquisition']['FPConsole']['Signals']['Series0001']
             dataset_keys = doric_dataset.keys()
             if mode == 'input_output_no':
                 ch1_in = 'AIN' + str(ch1_col).split(',')[0].rjust(2,'0')
@@ -262,10 +262,10 @@ class PhotometryData:
             print('The HDF5 File contains unresolvable Time Series Data, moving to next session')
             return         
             
-            self.doric_pandas = pd.DataFrame({'Time': lock_time, 'Control': iso_data, 'Active': act_data})
-            self.ttl_pandas = pd.DataFrame({'Time': ttl_time, 'TTL': ttl_data})
-            self.doric_pandas = self.doric_pandas.astype('float')
-            self.ttl_pandas = self.ttl_pandas.astype('float')
+        self.doric_pandas = pd.DataFrame({'Time': lock_time, 'Control': iso_data, 'Active': act_data})
+        self.ttl_pandas = pd.DataFrame({'Time': ttl_time, 'TTL': ttl_data})
+        self.doric_pandas = self.doric_pandas.astype('float')
+        self.ttl_pandas = self.ttl_pandas.astype('float')
 
         return
 

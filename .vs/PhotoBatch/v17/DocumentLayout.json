@@ -1,0 +1,58 @@
+{
+  "Version": 1,
+  "WorkspaceRootPath": "C:\\Users\\MOUSETRAP-DAN\\source\\repos\\dpalmer9\\PhotoBatch\\",
+  "Documents": [
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\MOUSETRAP-DAN\\source\\repos\\dpalmer9\\PhotoBatch\\Photometry Analyzer BATCH.py||{8B382828-6202-11D1-8870-0000F87579D2}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:Photometry Analyzer BATCH.py||{8B382828-6202-11D1-8870-0000F87579D2}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\MOUSETRAP-DAN\\source\\repos\\dpalmer9\\PhotoBatch\\Config.ini||{3B902123-F8A7-4915-9F01-361F908088D0}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:Config.ini||{3B902123-F8A7-4915-9F01-361F908088D0}"
+    }
+  ],
+  "DocumentGroupContainers": [
+    {
+      "Orientation": 1,
+      "VerticalTabListWidth": 256,
+      "DocumentGroups": [
+        {
+          "DockedHeight": 200,
+          "SelectedChildIndex": 2,
+          "Children": [
+            {
+              "$type": "Bookmark",
+              "Name": "ST:128:0:{116d2292-e37d-41cd-a077-ebacac4c8cc4}"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 1,
+              "Title": "Config.ini",
+              "DocumentMoniker": "C:\\Users\\MOUSETRAP-DAN\\source\\repos\\dpalmer9\\PhotoBatch\\Config.ini",
+              "RelativeDocumentMoniker": "Config.ini",
+              "ToolTip": "C:\\Users\\MOUSETRAP-DAN\\source\\repos\\dpalmer9\\PhotoBatch\\Config.ini",
+              "RelativeToolTip": "Config.ini",
+              "ViewState": "AQIAAB4AAAAAAAAAAAAAABgAAAASAAAA",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.002768|",
+              "WhenOpened": "2024-04-23T14:17:45.676Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "Photometry Analyzer BATCH.py",
+              "DocumentMoniker": "C:\\Users\\MOUSETRAP-DAN\\source\\repos\\dpalmer9\\PhotoBatch\\Photometry Analyzer BATCH.py",
+              "RelativeDocumentMoniker": "Photometry Analyzer BATCH.py",
+              "ToolTip": "C:\\Users\\MOUSETRAP-DAN\\source\\repos\\dpalmer9\\PhotoBatch\\Photometry Analyzer BATCH.py",
+              "RelativeToolTip": "Photometry Analyzer BATCH.py",
+              "ViewState": "AQIAALwAAAAAAAAAAAAQwMMAAAAnAAAA",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.002457|",
+              "WhenOpened": "2024-04-23T13:56:33.087Z",
+              "EditorCaption": ""
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
