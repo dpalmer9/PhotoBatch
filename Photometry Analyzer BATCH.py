@@ -1176,7 +1176,7 @@ run_summaryf = int(config_file['Output']['create_summaryf'])
 run_summaryp = int(config_file['Output']['create_summaryp'])
 
 #center_z_on_iti = int(config_file['ITI_Window']['center_z_on_iti'])
-center_z = str(config_file['ITI_Window']['center_z_on_iti']) # iti, prior, whole
+center_z = str(config_file['ITI_Window']['center_z']) # iti, prior, whole
 center_method = config_file['ITI_Window']['center_method']
 
 exclusion_list = config_file['Filter']['exclusion_list']
