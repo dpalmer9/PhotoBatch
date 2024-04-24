@@ -193,7 +193,7 @@ class PhotometryData:
         doric_h5 = h5py.File(self.doric_file_path,'r')
 
         try:
-            software_version = doric_h5[''].attrs['SoftwareVersion']
+            software_version = doric_h5.attrs['SoftwareVersion']
         except KeyError:
             software_version = '5'
         
