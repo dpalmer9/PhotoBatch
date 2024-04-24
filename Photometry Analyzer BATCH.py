@@ -759,12 +759,12 @@ class PhotometryData:
                                                          (trial_deltaf['Time'] <= self.abet_time_list.loc[index, 'End_Time']), 'DeltaF']
 
                     if center_method == 'mean':
-                        z_mean = iti_data.mean()
-                        z_sd = iti_data.std()
+                        z_mean = baseline_data.mean()
+                        z_sd = baseline_data.std()
                     elif center_method == 'median':
-                        z_mean = iti_data.median()
-                        z_dev = np.absolute(np.subtract(iti_data, z_mean))
-                        z_sd = z_dev.median()
+                        z_mean = baseline_data.median()
+                        z_dev = np.absolute(np.subtract(baseline_data, z_mean))
+                        z_sd = baseline_data.median()
                 elif trial_normalize == 'whole':
                     deltaf_split = trial_deltaf.loc[:, 'DeltaF']
                     if center_method == 'mean':
