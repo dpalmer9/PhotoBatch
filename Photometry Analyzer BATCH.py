@@ -197,7 +197,7 @@ class PhotometryData:
         except KeyError:
             software_version = '5'
         
-        if software_version == ('6.3.1.0' or '6.3.2.0'):
+        if software_version in ('6.3.1.0', '6.3.2.0'):
             doric_dataset = doric_h5['DataAcquisition']['FPConsole']['Signals']['Series0001']
             dataset_keys = doric_dataset.keys()
             if mode == 'input_output_no':
@@ -258,7 +258,7 @@ class PhotometryData:
                     ttl_time = np.array(ttl_time)
                     ttl_data = doric_dataset['AnalogIn'][key]
                     ttl_data = np.array(ttl_data)
-        elif software_version == ('6.2.5.0',''):
+        elif software_version in ('6.2.5.0',''):
             print('The HDF5 File contains unresolvable Time Series Data, moving to next session')
             return         
             
