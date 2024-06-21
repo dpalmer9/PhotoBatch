@@ -392,11 +392,14 @@ class PhotometryData:
                     sub_index = sub_values.abs().idxmin(skipna=True)
                     filter_value = filter_event_abet.loc[sub_index, 'Arg1_Value']
                     if isinstance(filter_arg,str):
-                        filter_val_abet = abet_data.loc[(abet_data[self.event_name_col] == str(filter_type)) & (
-                            abet_data['Item_Name'] == str(filter_arg)), :]
-                        filter_index = filter_val_abet.index
-                        arg_index = filter_index.get_indexer([sub_index], tolerance='pad')
-                        filter_arg = filter_val_abet.loc[arg_index,'Arg1_Value']
+                        filter_arg_test = filter_arg.replace(".","",1)
+                        if not filter_arg_test.isdigit():
+                            filter_val_abet = abet_data.loc[(abet_data[self.event_name_col] == 'Variable Event') & (
+                                abet_data['Item_Name'] == str(filter_arg)), :]
+                            filter_index = filter_val_abet.index
+                            arg_index = filter_index.get_indexer([sub_index], method='pad')
+                            print(arg_index[0])
+                            filter_arg = filter_val_abet.loc[filter_val_abet.index[arg_index[0]],'Arg1_Value']
                     
                     # Equals
                     if ',' in filter_arg:
