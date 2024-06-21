@@ -1151,10 +1151,10 @@ def abet_extract_information(abet_file_path):
 # Config Load
 curr_dirr = os.getcwd()
 
-config_ini = curr_dirr + '\\config.ini'
+config_ini = curr_dirr + '\\Config.ini'
+print(config_ini)
 config_file = configparser.ConfigParser()
 config_file.read(config_ini)
-
 file_list_path = config_file['Filepath']['file_list_path']
 file_csv = pd.read_csv(file_list_path)
 
@@ -1263,7 +1263,23 @@ for row_index, row in file_csv.iterrows():
                     file_string = file_string + row2.loc[fil_name_str] + '-'
                     summary_string = summary_string + row2.loc[fil_name_str] + '-'
                 else:
-                    file_string = file_string + row2.loc[fil_name_str] + '-' + str(row2.loc[fil_arg_str]) + '-'
+                    row2[fil_eval_str] = str(row2[fil_eval_str])
+                    print(row2[fil_eval_str])
+                    if row2[fil_eval_str] == "=":
+                        op='equal'
+                    elif row2[fil_eval_str] == "!=":
+                        op='not equal'
+                    elif row2[fil_eval_str] == "<":   
+                        op = 'less than'
+                    elif row2[fil_eval_str] == "<=":
+                        op = 'less than equal'
+                    elif row2[fil_eval_str] == ">":
+                        op = 'greater than'
+                    elif row2[fil_eval_str] == ">=":
+                        op = 'greater than equal'
+                    else:
+                        op = ''
+                    file_string = file_string + row2.loc[fil_name_str] + '-' + op + '-' + str(row2.loc[fil_arg_str]) + '-'
                     summary_string = summary_string + row2.loc[fil_name_str] + '-' + str(row2.loc[fil_arg_str]) + '-'
             file_string = file_string + date
             file_dir = output_path + file_string
