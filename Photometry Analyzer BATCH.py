@@ -775,7 +775,7 @@ class PhotometryData:
                     elif center_method == 'median':
                         z_mean = baseline_data.median()
                         z_dev = np.absolute(np.subtract(baseline_data, z_mean))
-                        z_sd = baseline_data.median()
+                        z_sd = z_dev.median()
                 elif trial_normalize == 'whole':
                     deltaf_split = trial_deltaf.loc[:, 'DeltaF']
                     if center_method == 'mean':
