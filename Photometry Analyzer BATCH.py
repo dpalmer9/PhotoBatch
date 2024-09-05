@@ -200,12 +200,11 @@ class PhotometryData:
         if software_version in ('6.3.1.0', '6.3.2.0'):
             doric_dataset = doric_h5['DataAcquisition']['FPConsole']['Signals']['Series0001']
             dataset_keys = doric_dataset.keys()
-            if mode == 'input_output_no':
-                ch1_in = 'AIN' + str(ch1_col).split(',')[0].rjust(2,'0')
-                ch1_out = 'LockInAOUT' + str(ch1_col).split(',')[1].rjust(2,'0')
-                ch2_in = 'AIN' + str(ch2_col).split(',')[0].rjust(2,'0')
-                ch2_out = 'LockInAOUT' + str(ch2_col).split(',')[1].rjust(2,'0')
-                ttl_in = 'AIN' + str(ttl_col).rjust(2,'0')
+            ch1_in = 'AIN' + str(ch1_col).split(',')[0].rjust(2,'0')
+            ch1_out = 'LockInAOUT' + str(ch1_col).split(',')[1].rjust(2,'0')
+            ch2_in = 'AIN' + str(ch2_col).split(',')[0].rjust(2,'0')
+            ch2_out = 'LockInAOUT' + str(ch2_col).split(',')[1].rjust(2,'0')
+            ttl_in = 'AIN' + str(ttl_col).rjust(2,'0')
             
             for key in dataset_keys:
                 if ch1_out in key:
@@ -223,15 +222,14 @@ class PhotometryData:
                 if ttl_in in key:
                     ttl_time = np.array(doric_dataset['AnalogIn']['Time'])
                     ttl_data = np.array(doric_dataset['AnalogIn'][ttl_in])
-        elif software_version == ('6.1.5.0'):
+        elif software_version == '6.1.5.0':
             doric_dataset = doric_h5['DataAcquisition']['FPConsole']['Signals']['Series0001']
             dataset_keys = doric_dataset.keys()
-            if mode == 'input_output_no':
-                ch1_in = 'AIN' + str(ch1_col).split(',')[0].rjust(2,'0')
-                ch1_out = 'LockInAOUT' + str(ch1_col).split(',')[1].rjust(2,'0')
-                ch2_in = 'AIN' + str(ch2_col).split(',')[0].rjust(2,'0')
-                ch2_out = 'LockInAOUT' + str(ch2_col).split(',')[1].rjust(2,'0')
-                ttl_in = 'AIN' + str(ttl_col).rjust(2,'0')
+            ch1_in = 'AIN' + str(ch1_col).split(',')[0].rjust(2,'0')
+            ch1_out = 'LockInAOUT' + str(ch1_col).split(',')[1].rjust(2,'0')
+            ch2_in = 'AIN' + str(ch2_col).split(',')[0].rjust(2,'0')
+            ch2_out = 'LockInAOUT' + str(ch2_col).split(',')[1].rjust(2,'0')
+            ttl_in = 'AIN' + str(ttl_col).rjust(2,'0')
             
             for key in dataset_keys:
                 if ch1_in in key:
@@ -347,6 +345,7 @@ class PhotometryData:
                               filter_before=1,filter_eval=''):
             condition_event_names = ['Condition Event']
             variable_event_names = ['Variable Event']
+            display_event_names = ['Whisker - Display Image']
             if filter_type in condition_event_names:
                 filter_event_abet = abet_data.loc[(abet_data[self.event_name_col] == str(filter_type)) & (
                             abet_data['Group_ID'] == str(int(filter_group))), :]
@@ -392,6 +391,15 @@ class PhotometryData:
                         sub_values[sub_values < 0] = np.nan
                     sub_index = sub_values.abs().idxmin(skipna=True)
                     filter_value = filter_event_abet.loc[sub_index, 'Arg1_Value']
+                    if isinstance(filter_arg,str):
+                        filter_arg_test = filter_arg.replace(".","",1)
+                        if not filter_arg_test.isdigit():
+                            filter_val_abet = abet_data.loc[(abet_data[self.event_name_col] == 'Variable Event') & (
+                                abet_data['Item_Name'] == str(filter_arg)), :]
+                            filter_index = filter_val_abet.index
+                            arg_index = filter_index.get_indexer([sub_index], method='pad')
+                            print(arg_index[0])
+                            filter_arg = filter_val_abet.loc[filter_val_abet.index[arg_index[0]],'Arg1_Value']
                     
                     # Equals
                     if ',' in filter_arg:
@@ -424,6 +432,9 @@ class PhotometryData:
 
                 event_data = event_data.dropna()
                 event_data = event_data.reset_index(drop=True)
+            elif filter_type in display_event_names:
+                return
+
             return event_data
 
         touch_event_names = ['Touch Up Event', 'Touch Down Event', 'Whisker - Clear Image by Position']
@@ -764,7 +775,7 @@ class PhotometryData:
                     elif center_method == 'median':
                         z_mean = baseline_data.median()
                         z_dev = np.absolute(np.subtract(baseline_data, z_mean))
-                        z_sd = baseline_data.median()
+                        z_sd = z_dev.median()
                 elif trial_normalize == 'whole':
                     deltaf_split = trial_deltaf.loc[:, 'DeltaF']
                     if center_method == 'mean':
@@ -1140,10 +1151,10 @@ def abet_extract_information(abet_file_path):
 # Config Load
 curr_dirr = os.getcwd()
 
-config_ini = curr_dirr + '\\config.ini'
+config_ini = curr_dirr + '\\Config.ini'
+print(config_ini)
 config_file = configparser.ConfigParser()
 config_file.read(config_ini)
-
 file_list_path = config_file['Filepath']['file_list_path']
 file_csv = pd.read_csv(file_list_path)
 
@@ -1252,7 +1263,23 @@ for row_index, row in file_csv.iterrows():
                     file_string = file_string + row2.loc[fil_name_str] + '-'
                     summary_string = summary_string + row2.loc[fil_name_str] + '-'
                 else:
-                    file_string = file_string + row2.loc[fil_name_str] + '-' + str(row2.loc[fil_arg_str]) + '-'
+                    row2[fil_eval_str] = str(row2[fil_eval_str])
+                    print(row2[fil_eval_str])
+                    if row2[fil_eval_str] == "=":
+                        op='equal'
+                    elif row2[fil_eval_str] == "!=":
+                        op='not equal'
+                    elif row2[fil_eval_str] == "<":   
+                        op = 'less than'
+                    elif row2[fil_eval_str] == "<=":
+                        op = 'less than equal'
+                    elif row2[fil_eval_str] == ">":
+                        op = 'greater than'
+                    elif row2[fil_eval_str] == ">=":
+                        op = 'greater than equal'
+                    else:
+                        op = ''
+                    file_string = file_string + row2.loc[fil_name_str] + '-' + op + '-' + str(row2.loc[fil_arg_str]) + '-'
                     summary_string = summary_string + row2.loc[fil_name_str] + '-' + str(row2.loc[fil_arg_str]) + '-'
             file_string = file_string + date
             file_dir = output_path + file_string
