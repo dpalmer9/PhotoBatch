@@ -259,7 +259,15 @@ class PhotometryData:
         elif software_version in ('6.2.5.0',''):
             print('The HDF5 File contains unresolvable Time Series Data, moving to next session')
             return         
-            
+        
+        if lock_time.shape[0] != act_data.shape[0]:
+            diff = act_data.shape[0] - lock_time.shape[0]
+            act_data = act_data[0:(act_data.shape[0] - 1 - diff)]
+            iso_data = iso_data[0:(iso_data.shape[0] - 1 - diff)]
+        if ttl_time.shape[0] != ttl_data.shape[0]:
+            diff = ttl_data.shape[0] - ttl_time.shape[0]
+            ttl_data = ttl_data[0:(ttl_data.shape[0] - 1 - diff)]
+
         self.doric_pandas = pd.DataFrame({'Time': lock_time, 'Control': iso_data, 'Active': act_data})
         self.ttl_pandas = pd.DataFrame({'Time': ttl_time, 'TTL': ttl_data})
         self.doric_pandas = self.doric_pandas.astype('float')
