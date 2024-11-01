@@ -4,10 +4,63 @@ import configparser
 from PySide6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout,
                                QPushButton, QLabel, QFileDialog, QLineEdit, QTableWidget,
                                QTableWidgetItem, QFormLayout, QLineEdit, QMessageBox,
-                               QGroupBox, QCheckBox, QHBoxLayout, QMenuBar, QComboBox)
+                               QGroupBox, QCheckBox, QHBoxLayout, QMenuBar, QComboBox,
+                               QListWidget, QListWidgetItem)
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 
+
+class MultiSelectComboBox(QWidget):
+    def __init__(self):
+        super().__init__()
+
+        # Layout to hold main elements
+        layout = QVBoxLayout(self)
+
+        # Main ComboBox with editable line edit
+        self.combo_box = QComboBox()
+        self.combo_box.setEditable(True)
+        self.combo_box.lineEdit().setPlaceholderText("Select or add new entries...")
+        self.combo_box.lineEdit().returnPressed.connect(self.add_custom_entry)  # Custom entries
+
+        # ListWidget for displaying items with checkboxes
+        self.list_widget = QListWidget()
+
+        # Button to confirm selection and update combo box display
+        self.select_button = QPushButton("Update Selection")
+        self.select_button.clicked.connect(self.update_combo_box_display)
+
+        # Add widgets to layout
+        layout.addWidget(self.combo_box)
+        layout.addWidget(self.list_widget)
+        layout.addWidget(self.select_button)
+
+    def add_option(self, option_text):
+        """Adds an option to the list widget and combo box with a checkbox."""
+        # Check if the option already exists to avoid duplicates
+        if option_text not in [self.list_widget.item(i).text() for i in range(self.list_widget.count())]:
+            item = QListWidgetItem(option_text)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)  # Add checkbox
+            item.setCheckState(Qt.Unchecked)  # Default to unchecked
+            self.list_widget.addItem(item)
+            self.combo_box.addItem(option_text)
+
+    def add_custom_entry(self):
+        """Adds a custom entry from the QLineEdit of the QComboBox to both the list widget and combo box."""
+        custom_text = self.combo_box.currentText().strip()
+        if custom_text:
+            self.add_option(custom_text)
+            self.combo_box.setCurrentText("")  # Clear text after entry
+
+    def update_combo_box_display(self):
+        """Updates the combo box display to show selected items based on checked state."""
+        selected_items = [self.list_widget.item(i).text()
+                          for i in range(self.list_widget.count())
+                          if self.list_widget.item(i).checkState() == Qt.Checked]
+
+        # Clear the combo box display and add selected items as comma-separated text
+        self.combo_box.clear()
+        self.combo_box.addItem(", ".join(selected_items) if selected_items else "None")
 
 class FiberPhotometryApp(QMainWindow):
     def __init__(self):
@@ -24,6 +77,7 @@ class FiberPhotometryApp(QMainWindow):
         self.unique_event_types = []
         self.unique_event_names = []
         self.unique_event_groups = []
+        self.trial_stage_options = []
 
         # Main layout with tabs
         self.tabs = QTabWidget()
@@ -72,16 +126,20 @@ class FiberPhotometryApp(QMainWindow):
         if file_path:
             try:
                 data = pd.read_csv(file_path)
-                event_data = data.iloc[28:]
-                event_data.columns = event_data.iloc[0]
-                print(event_data.columns)
-                event_data = event_data.drop(28)
+                self.event_data = data.iloc[28:]
+                self.event_data.columns = self.event_data.iloc[0]
+                self.event_data = self.event_data.drop(28)
 
                 # Extract unique values for dropdowns
-                self.unique_event_types = event_data['Evnt_Name'].dropna().unique().tolist()
-                self.unique_event_names = event_data['Item_Name'].dropna().unique().tolist()
-                self.unique_event_groups = event_data['Group_ID'].dropna().unique().tolist()
+                self.unique_event_types = self.event_data['Evnt_Name'].dropna().unique().tolist()
+                self.unique_event_names = self.event_data['Item_Name'].dropna().unique().tolist()
+                self.unique_event_groups = self.event_data['Group_ID'].dropna().unique().tolist()
+                self.trial_stage_options = self.event_data.loc[self.event_data['Evnt_Name'] == "Condition Event", 'Item_Name'].dropna().unique().tolist()
                 self.template_loaded = True
+
+                # Update the trial start stage entry in options tab if template is loaded
+                self.update_options_with_template()
+
                 QMessageBox.information(self, "Imported", f"Template behaviour file imported from: {file_path}")
             except Exception as e:
                 QMessageBox.warning(self, "Error", f"Failed to load template: {str(e)}")
@@ -104,6 +162,16 @@ class FiberPhotometryApp(QMainWindow):
 
         # Table to display the Event Sheet content
         self.event_table = QTableWidget()
+
+        # Set column count and headers
+        self.event_table.setColumnCount(23)
+        self.event_table.setHorizontalHeaderLabels([
+            'event_type', 'event_name', 'event_group', 'event_arg', 'num_filter', 'filter_type',
+            'filter_name', 'filter_group', 'filter_arg', 'filter_eval', 'filter_prior',
+            'filter_type2', 'filter_name2', 'filter_group2', 'filter_arg2', 'filter_eval2', 'filter_prior2',
+            'filter_type3', 'filter_name3', 'filter_group3', 'filter_arg3', 'filter_eval3', 'filter_prior3'
+        ])
+
         layout.addWidget(self.event_table)
 
         # Buttons to add/remove rows and save
@@ -134,6 +202,10 @@ class FiberPhotometryApp(QMainWindow):
 
         # Table to display the File Pair content
         self.file_pair_table = QTableWidget()
+        self.file_pair_table.setColumnCount(6)
+        self.file_pair_table.setHorizontalHeaderLabels([
+            'abet_path', 'doric_path', 'ctrl_col_num', 'act_col_num', 'ttl_col_num', 'mode'
+        ])
         layout.addWidget(self.file_pair_table)
 
         # Buttons to add/remove rows and save
@@ -256,6 +328,7 @@ class FiberPhotometryApp(QMainWindow):
 
         # Filter out file and event sheet sections
         excluded_sections = {'Filepath', 'Event_Window'}
+        multibox_options = ['trial_start_stage','trial_end_stage','exclusion_list']
 
         # Create a group for each section and add its fields
         for section in self.config.sections():
@@ -273,11 +346,15 @@ class FiberPhotometryApp(QMainWindow):
                         checkbox.setChecked(value.lower() == 'true')
                         group_layout.addRow(display_key, checkbox)
                         setattr(self, f"{section}_{key}_checkbox", checkbox)  # Store checkbox for saving
+                    elif key in multibox_options:
+                        multicombobox_edit = MultiSelectComboBox()
+                        setattr(self, f"{section}_{key}_multicombobox_edit", multicombobox_edit)  # Store line edit for saving
+                        group_layout.addRow(display_key, getattr(self, f"{section}_{key}_multicombobox_edit"))
                     else:
                         # Use line edit for other parameters
                         line_edit = QLineEdit(value)
-                        group_layout.addRow(display_key, line_edit)
                         setattr(self, f"{section}_{key}_line_edit", line_edit)  # Store line edit for saving
+                        group_layout.addRow(display_key, getattr(self, f"{section}_{key}_line_edit"))
 
                 group_box.setLayout(group_layout)
                 main_layout.addWidget(group_box)
@@ -288,6 +365,15 @@ class FiberPhotometryApp(QMainWindow):
         main_layout.addWidget(save_button)
 
         self.options_tab.setLayout(main_layout)
+
+    def update_options_with_template(self):
+        if self.template_loaded:
+            for stage in self.trial_stage_options:
+                getattr(self, 'ITI_Window_trial_start_stage_multicombobox_edit').add_option(stage)
+                getattr(self, 'ITI_Window_trial_end_stage_multicombobox_edit').add_option(stage)
+                getattr(self, 'Filter_exclusion_list_multicombobox_edit').add_option(stage)
+        else:
+            QMessageBox.warning(self, "Error", "No template loaded, cannot update trial start stage.")
 
     def save_config_changes(self):
         # Update config with new values from form
