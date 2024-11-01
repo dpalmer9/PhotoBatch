@@ -434,15 +434,15 @@ class FiberPhotometryApp(QMainWindow):
                     self.config[section][key] = 'true' if widget.isChecked() else 'false'
 
         # Save to config.ini file
-        with open('config.ini', 'w') as configfile:
+        with open('../Config.ini', 'w') as configfile:
             self.config.write(configfile)
 
         # Confirmation message
         QMessageBox.information(self, "Saved", "Configuration changes saved successfully.")
 
 
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    window = FiberPhotometryApp()
-    window.show()
-    sys.exit(app.exec())
+#if __name__ == "__main__":
+    #app = QApplication(sys.argv)
+    #window = FiberPhotometryApp()
+    #window.show()
+    #sys.exit(app.exec())
