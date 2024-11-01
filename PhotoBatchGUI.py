@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget, Q
                                QPushButton, QLabel, QFileDialog, QLineEdit, QTableWidget,
                                QTableWidgetItem, QFormLayout, QLineEdit, QMessageBox,
                                QGroupBox, QCheckBox, QHBoxLayout, QMenuBar, QComboBox,
-                               QListWidget, QListWidgetItem)
+                               QListWidget, QListWidgetItem, QSpinBox)
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 
@@ -260,6 +260,10 @@ class FiberPhotometryApp(QMainWindow):
                 elif header == 'event_group' and self.template_loaded:
                     event_group_combo = QComboBox()
                     table_widget.setCellWidget(row, col, event_group_combo)
+                elif header == 'num_filter':
+                    num_filter_spinbox = QSpinBox()
+                    num_filter_spinbox.setValue(int(data.iat[row, col]) if pd.notna(data.iat[row, col]) else 0)
+                    table_widget.setCellWidget(row, col, num_filter_spinbox)
                 else:
                     item = QTableWidgetItem(str(data.iat[row, col]))
                     item.setFlags(item.flags() | Qt.ItemIsEditable)
@@ -310,6 +314,10 @@ class FiberPhotometryApp(QMainWindow):
             elif header == 'event_group' and self.template_loaded:
                 event_group_combo = QComboBox()
                 table_widget.setCellWidget(current_row_count, col, event_group_combo)
+            elif header == 'num_filter':
+                num_filter_spinbox = QSpinBox()
+                num_filter_spinbox.setValue(0)
+                table_widget.setCellWidget(current_row_count, col, num_filter_spinbox)
             else:
                 item = QTableWidgetItem("")
                 item.setFlags(item.flags() | Qt.ItemIsEditable)
