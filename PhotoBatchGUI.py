@@ -4,7 +4,7 @@ import configparser
 from PySide6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout,
                                QPushButton, QLabel, QFileDialog, QLineEdit, QTableWidget,
                                QTableWidgetItem, QFormLayout, QLineEdit, QMessageBox,
-                               QGroupBox, QCheckBox, QHBoxLayout, QMenuBar)
+                               QGroupBox, QCheckBox, QHBoxLayout, QMenuBar, QComboBox)
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 
@@ -18,6 +18,12 @@ class FiberPhotometryApp(QMainWindow):
         # Initialize configuration
         self.config = configparser.ConfigParser()
         self.config.read('config.ini')
+
+        # Initialize template data
+        self.template_loaded = False
+        self.unique_event_types = []
+        self.unique_event_names = []
+        self.unique_event_groups = []
 
         # Main layout with tabs
         self.tabs = QTabWidget()
@@ -64,7 +70,21 @@ class FiberPhotometryApp(QMainWindow):
     def import_template_behaviour_file(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Import Template Behaviour File", "", "CSV Files (*.csv)")
         if file_path:
-            QMessageBox.information(self, "Imported", f"Template behaviour file imported from: {file_path}")
+            try:
+                data = pd.read_csv(file_path)
+                event_data = data.iloc[28:]
+                event_data.columns = event_data.iloc[0]
+                print(event_data.columns)
+                event_data = event_data.drop(28)
+
+                # Extract unique values for dropdowns
+                self.unique_event_types = event_data['Evnt_Name'].dropna().unique().tolist()
+                self.unique_event_names = event_data['Item_Name'].dropna().unique().tolist()
+                self.unique_event_groups = event_data['Group_ID'].dropna().unique().tolist()
+                self.template_loaded = True
+                QMessageBox.information(self, "Imported", f"Template behaviour file imported from: {file_path}")
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Failed to load template: {str(e)}")
 
     def init_home_tab(self):
         layout = QVBoxLayout()
@@ -156,9 +176,21 @@ class FiberPhotometryApp(QMainWindow):
         # Populate the table with CSV data
         for row in range(rows):
             for col in range(cols):
-                item = QTableWidgetItem(str(data.iat[row, col]))
-                item.setFlags(item.flags() | Qt.ItemIsEditable)  # Make cells editable
-                table_widget.setItem(row, col, item)
+                header = data.columns[col].lower()
+                if header in ['event_type', 'event_name', 'event_group'] and self.template_loaded:
+                    combo_box = QComboBox()
+                    if header == 'event_type':
+                        combo_box.addItems(self.unique_event_types)
+                    elif header == 'event_name':
+                        combo_box.addItems(self.unique_event_names)
+                    elif header == 'event_group':
+                        combo_box.addItems(self.unique_event_groups)
+                    combo_box.setCurrentText(str(data.iat[row, col]))
+                    table_widget.setCellWidget(row, col, combo_box)
+                else:
+                    item = QTableWidgetItem(str(data.iat[row, col]))
+                    item.setFlags(item.flags() | Qt.ItemIsEditable)  # Make cells editable
+                    table_widget.setItem(row, col, item)
 
         table_widget.resizeColumnsToContents()
 
@@ -166,9 +198,20 @@ class FiberPhotometryApp(QMainWindow):
         current_row_count = table_widget.rowCount()
         table_widget.insertRow(current_row_count)
         for col in range(table_widget.columnCount()):
-            item = QTableWidgetItem("")
-            item.setFlags(item.flags() | Qt.ItemIsEditable)  # Make new cells editable
-            table_widget.setItem(current_row_count, col, item)
+            header = table_widget.horizontalHeaderItem(col).text().lower()
+            if header in ['event_type', 'event_name', 'event_group'] and self.template_loaded:
+                combo_box = QComboBox()
+                if header == 'event_type':
+                    combo_box.addItems(self.unique_event_types)
+                elif header == 'event_name':
+                    combo_box.addItems(self.unique_event_names)
+                elif header == 'event_group':
+                    combo_box.addItems(self.unique_event_groups)
+                table_widget.setCellWidget(current_row_count, col, combo_box)
+            else:
+                item = QTableWidgetItem("")
+                item.setFlags(item.flags() | Qt.ItemIsEditable)  # Make new cells editable
+                table_widget.setItem(current_row_count, col, item)
 
     def remove_row(self, table_widget):
         current_row = table_widget.currentRow()
@@ -184,8 +227,13 @@ class FiberPhotometryApp(QMainWindow):
             data = []
             headers = [table_widget.horizontalHeaderItem(col).text() for col in range(cols)]
             for row in range(rows):
-                row_data = [table_widget.item(row, col).text() if table_widget.item(row, col) else "" for col in
-                            range(cols)]
+                row_data = []
+                for col in range(cols):
+                    if isinstance(table_widget.cellWidget(row, col), QComboBox):
+                        row_data.append(table_widget.cellWidget(row, col).currentText())
+                    else:
+                        item = table_widget.item(row, col)
+                        row_data.append(item.text() if item else "")
                 data.append(row_data)
 
             # Save data to CSV using pandas
