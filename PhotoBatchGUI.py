@@ -236,53 +236,83 @@ class FiberPhotometryApp(QMainWindow):
             self.display_csv_in_table(file_path, self.file_pair_table)
 
     def display_csv_in_table(self, file_path, table_widget):
-        # Load CSV data
         data = pd.read_csv(file_path)
         rows, cols = data.shape
-
-        # Set up the table widget
         table_widget.setRowCount(rows)
         table_widget.setColumnCount(cols)
         table_widget.setHorizontalHeaderLabels(data.columns)
 
-        # Populate the table with CSV data
         for row in range(rows):
             for col in range(cols):
                 header = data.columns[col].lower()
-                if header in ['event_type', 'event_name', 'event_group'] and self.template_loaded:
-                    combo_box = QComboBox()
-                    if header == 'event_type':
-                        combo_box.addItems(self.unique_event_types)
-                    elif header == 'event_name':
-                        combo_box.addItems(self.unique_event_names)
-                    elif header == 'event_group':
-                        combo_box.addItems(self.unique_event_groups)
-                    combo_box.setCurrentText(str(data.iat[row, col]))
-                    table_widget.setCellWidget(row, col, combo_box)
+                if header == 'event_type' and self.template_loaded:
+                    event_type_combo = QComboBox()
+                    event_type_combo.addItems(self.unique_event_types)
+                    event_type_combo.setCurrentText(str(data.iat[row, col]))
+                    event_type_combo.currentTextChanged.connect(
+                        lambda text, r=row: self.filter_event_data(r, text, table_widget))
+                    table_widget.setCellWidget(row, col, event_type_combo)
+                elif header == 'event_name' and self.template_loaded:
+                    event_name_combo = QComboBox()
+                    event_name_combo.currentTextChanged.connect(
+                        lambda text, r=row: self.filter_event_group(r, text, table_widget))
+                    table_widget.setCellWidget(row, col, event_name_combo)
+                elif header == 'event_group' and self.template_loaded:
+                    event_group_combo = QComboBox()
+                    table_widget.setCellWidget(row, col, event_group_combo)
                 else:
                     item = QTableWidgetItem(str(data.iat[row, col]))
-                    item.setFlags(item.flags() | Qt.ItemIsEditable)  # Make cells editable
+                    item.setFlags(item.flags() | Qt.ItemIsEditable)
                     table_widget.setItem(row, col, item)
 
         table_widget.resizeColumnsToContents()
 
+    def filter_event_data(self, row, event_type, table_widget):
+        filtered_names = self.event_data[self.event_data['Evnt_Name'] == event_type]['Item_Name'].dropna().unique()
+        name_combo = table_widget.cellWidget(row, table_widget.columnCount() - 22)  # Column index for event_name
+        name_combo.clear()
+        name_combo.addItems(filtered_names)
+
+        # Trigger the event group filter for the first available event name
+        if filtered_names.size > 0:
+            self.filter_event_group(row, filtered_names[0], table_widget)
+
+    def filter_event_group(self, row, event_name, table_widget):
+        event_type_combo = table_widget.cellWidget(row, table_widget.columnCount() - 23)  # Column index for event_type
+        event_type = event_type_combo.currentText()
+
+        filtered_groups = self.event_data[
+            (self.event_data['Evnt_Name'] == event_type) &
+            (self.event_data['Item_Name'] == event_name)
+            ]['Group_ID'].dropna().unique()
+
+        group_combo = table_widget.cellWidget(row, table_widget.columnCount() - 21)  # Column index for event_group
+        group_combo.clear()
+        group_combo.addItems(filtered_groups)
+
     def add_row(self, table_widget):
         current_row_count = table_widget.rowCount()
         table_widget.insertRow(current_row_count)
+
         for col in range(table_widget.columnCount()):
             header = table_widget.horizontalHeaderItem(col).text().lower()
-            if header in ['event_type', 'event_name', 'event_group'] and self.template_loaded:
-                combo_box = QComboBox()
-                if header == 'event_type':
-                    combo_box.addItems(self.unique_event_types)
-                elif header == 'event_name':
-                    combo_box.addItems(self.unique_event_names)
-                elif header == 'event_group':
-                    combo_box.addItems(self.unique_event_groups)
-                table_widget.setCellWidget(current_row_count, col, combo_box)
+            if header == 'event_type' and self.template_loaded:
+                event_type_combo = QComboBox()
+                event_type_combo.addItems(self.unique_event_types)
+                event_type_combo.currentTextChanged.connect(
+                    lambda text, r=current_row_count: self.filter_event_data(r, text, table_widget))
+                table_widget.setCellWidget(current_row_count, col, event_type_combo)
+            elif header == 'event_name' and self.template_loaded:
+                event_name_combo = QComboBox()
+                event_name_combo.currentTextChanged.connect(
+                    lambda text, r=current_row_count: self.filter_event_group(r, text, table_widget))
+                table_widget.setCellWidget(current_row_count, col, event_name_combo)
+            elif header == 'event_group' and self.template_loaded:
+                event_group_combo = QComboBox()
+                table_widget.setCellWidget(current_row_count, col, event_group_combo)
             else:
                 item = QTableWidgetItem("")
-                item.setFlags(item.flags() | Qt.ItemIsEditable)  # Make new cells editable
+                item.setFlags(item.flags() | Qt.ItemIsEditable)
                 table_widget.setItem(current_row_count, col, item)
 
     def remove_row(self, table_widget):
