@@ -4,8 +4,9 @@ import configparser
 from PySide6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout,
                                QPushButton, QLabel, QFileDialog, QLineEdit, QTableWidget,
                                QTableWidgetItem, QFormLayout, QLineEdit, QMessageBox,
-                               QGroupBox, QCheckBox, QHBoxLayout)
+                               QGroupBox, QCheckBox, QHBoxLayout, QMenuBar)
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction
 
 
 class FiberPhotometryApp(QMainWindow):
@@ -44,6 +45,26 @@ class FiberPhotometryApp(QMainWindow):
         self.init_analysis_tab()
         self.init_results_tab()
         self.init_options_tab()
+
+        # Initialize menu bar
+        self.init_menu_bar()
+
+    def init_menu_bar(self):
+        menu_bar = QMenuBar(self)
+        self.setMenuBar(menu_bar)
+
+        # File menu
+        file_menu = menu_bar.addMenu("File")
+
+        # Import template behavior file action
+        import_template_action = QAction("Import Template Behaviour File", self)
+        import_template_action.triggered.connect(self.import_template_behaviour_file)
+        file_menu.addAction(import_template_action)
+
+    def import_template_behaviour_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Import Template Behaviour File", "", "CSV Files (*.csv)")
+        if file_path:
+            QMessageBox.information(self, "Imported", f"Template behaviour file imported from: {file_path}")
 
     def init_home_tab(self):
         layout = QVBoxLayout()
