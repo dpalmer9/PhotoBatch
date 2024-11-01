@@ -164,13 +164,9 @@ class FiberPhotometryApp(QMainWindow):
         self.event_table = QTableWidget()
 
         # Set column count and headers
-        self.event_table.setColumnCount(23)
+        self.event_table.setColumnCount(5)
         self.event_table.setHorizontalHeaderLabels([
-            'event_type', 'event_name', 'event_group', 'event_arg', 'num_filter', 'filter_type',
-            'filter_name', 'filter_group', 'filter_arg', 'filter_eval', 'filter_prior',
-            'filter_type2', 'filter_name2', 'filter_group2', 'filter_arg2', 'filter_eval2', 'filter_prior2',
-            'filter_type3', 'filter_name3', 'filter_group3', 'filter_arg3', 'filter_eval3', 'filter_prior3'
-        ])
+            'event_type', 'event_name', 'event_group', 'event_arg', 'num_filter'])
 
         layout.addWidget(self.event_table)
 
@@ -263,6 +259,8 @@ class FiberPhotometryApp(QMainWindow):
                 elif header == 'num_filter':
                     num_filter_spinbox = QSpinBox()
                     num_filter_spinbox.setValue(int(data.iat[row, col]) if pd.notna(data.iat[row, col]) else 0)
+                    num_filter_spinbox.valueChanged.connect(
+                        lambda value, r=row: self.adjust_filter_columns(r, value, table_widget))
                     table_widget.setCellWidget(row, col, num_filter_spinbox)
                 else:
                     item = QTableWidgetItem(str(data.iat[row, col]))
@@ -317,11 +315,35 @@ class FiberPhotometryApp(QMainWindow):
             elif header == 'num_filter':
                 num_filter_spinbox = QSpinBox()
                 num_filter_spinbox.setValue(0)
+                num_filter_spinbox.valueChanged.connect(
+                    lambda value, r=current_row_count: self.adjust_filter_columns(r, value, table_widget))
                 table_widget.setCellWidget(current_row_count, col, num_filter_spinbox)
             else:
                 item = QTableWidgetItem("")
                 item.setFlags(item.flags() | Qt.ItemIsEditable)
                 table_widget.setItem(current_row_count, col, item)
+
+    def adjust_filter_columns(self, row, num_filters, table_widget):
+        """Adjust columns in the table based on the num_filter value."""
+        # Clear any existing filter columns beyond the current num_filter count
+        total_columns = 5 + (num_filters * 6)
+        table_widget.setColumnCount(total_columns)
+
+        # Set headers for the filter columns
+        for i in range(1, num_filters + 1):
+            base_index = 5 + (i - 1) * 6
+            if i == 1:
+                headers = ['filter_type', 'filter_name', 'filter_group', 'filter_arg', 'filter_eval', 'filter_prior']
+            else:
+                headers = [f'filter_type{i}', f'filter_name{i}', f'filter_group{i}', f'filter_arg{i}',
+                           f'filter_eval{i}', f'filter_prior{i}']
+            for j, header in enumerate(headers):
+                table_widget.setHorizontalHeaderItem(base_index + j, QTableWidgetItem(header))
+                item = QTableWidgetItem("")
+                table_widget.setItem(row, base_index + j, item)  # Initialize with empty items
+
+        # Adjust the table size
+        table_widget.resizeColumnsToContents()
 
     def remove_row(self, table_widget):
         current_row = table_widget.currentRow()
