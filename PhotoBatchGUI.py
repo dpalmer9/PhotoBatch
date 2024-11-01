@@ -17,50 +17,37 @@ class MultiSelectComboBox(QWidget):
         # Layout to hold main elements
         layout = QVBoxLayout(self)
 
-        # Main ComboBox with editable line edit
-        self.combo_box = QComboBox()
-        self.combo_box.setEditable(True)
-        self.combo_box.lineEdit().setPlaceholderText("Select or add new entries...")
-        self.combo_box.lineEdit().returnPressed.connect(self.add_custom_entry)  # Custom entries
+        # Line edit for direct entry
+        self.line_edit = QLineEdit()
+        self.line_edit.setPlaceholderText("Select or add new entries...")
+        self.line_edit.returnPressed.connect(self.add_custom_entry)  # Custom entries
 
         # ListWidget for displaying items with checkboxes
         self.list_widget = QListWidget()
 
-        # Button to confirm selection and update combo box display
-        self.select_button = QPushButton("Update Selection")
-        self.select_button.clicked.connect(self.update_combo_box_display)
-
         # Add widgets to layout
-        layout.addWidget(self.combo_box)
+        layout.addWidget(self.line_edit)
         layout.addWidget(self.list_widget)
-        layout.addWidget(self.select_button)
 
     def add_option(self, option_text):
-        """Adds an option to the list widget and combo box with a checkbox."""
-        # Check if the option already exists to avoid duplicates
+        """Adds an option to the list widget with a checkbox."""
         if option_text not in [self.list_widget.item(i).text() for i in range(self.list_widget.count())]:
             item = QListWidgetItem(option_text)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)  # Add checkbox
             item.setCheckState(Qt.Unchecked)  # Default to unchecked
             self.list_widget.addItem(item)
-            self.combo_box.addItem(option_text)
 
     def add_custom_entry(self):
-        """Adds a custom entry from the QLineEdit of the QComboBox to both the list widget and combo box."""
-        custom_text = self.combo_box.currentText().strip()
+        """Adds a custom entry from the line edit to the list widget."""
+        custom_text = self.line_edit.text().strip()
         if custom_text:
             self.add_option(custom_text)
-            self.combo_box.setCurrentText("")  # Clear text after entry
+            self.line_edit.clear()  # Clear text after entry
 
-    def update_combo_box_display(self):
-        """Updates the combo box display to show selected items based on checked state."""
-        selected_items = [self.list_widget.item(i).text()
-                          for i in range(self.list_widget.count())
-                          if self.list_widget.item(i).checkState() == Qt.Checked]
-
-        # Clear the combo box display and add selected items as comma-separated text
-        self.combo_box.clear()
-        self.combo_box.addItem(", ".join(selected_items) if selected_items else "None")
+    def get_checked_items(self):
+        """Returns a list of all checked items."""
+        return [self.list_widget.item(i).text() for i in range(self.list_widget.count())
+                if self.list_widget.item(i).checkState() == Qt.Checked]
 
 class FiberPhotometryApp(QMainWindow):
     def __init__(self):
