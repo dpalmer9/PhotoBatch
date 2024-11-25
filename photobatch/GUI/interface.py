@@ -110,12 +110,16 @@ class FiberPhotometryApp(QMainWindow):
 
     def import_template_behaviour_file(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Import Template Behaviour File", "", "CSV Files (*.csv)")
+        column_index = 0
         if file_path:
             try:
-                data = pd.read_csv(file_path)
-                self.event_data = data.iloc[28:]
+                data = pd.read_csv(file_path, sep=',', header=None, names=range(17))
+                for index, row in data.iterrows():
+                    if row[0] == 'Evnt_Time':
+                        column_index = index
+                self.event_data = data.iloc[column_index:]
                 self.event_data.columns = self.event_data.iloc[0]
-                self.event_data = self.event_data.drop(28)
+                self.event_data = self.event_data.drop(column_index)
 
                 # Extract unique values for dropdowns
                 self.unique_event_types = self.event_data['Evnt_Name'].dropna().unique().tolist()
@@ -416,9 +420,12 @@ class FiberPhotometryApp(QMainWindow):
     def update_options_with_template(self):
         if self.template_loaded:
             for stage in self.trial_stage_options:
-                getattr(self, 'ITI_Window_trial_start_stage_multicombobox_edit').add_option(stage)
-                getattr(self, 'ITI_Window_trial_end_stage_multicombobox_edit').add_option(stage)
-                getattr(self, 'Filter_exclusion_list_multicombobox_edit').add_option(stage)
+                try:
+                    getattr(self, 'ITI_Window_trial_start_stage_multicombobox_edit').add_option(stage)
+                    getattr(self, 'ITI_Window_trial_end_stage_multicombobox_edit').add_option(stage)
+                    getattr(self, 'Filter_exclusion_list_multicombobox_edit').add_option(stage)
+                except:
+                    print('No files loaded')
         else:
             QMessageBox.warning(self, "Error", "No template loaded, cannot update trial start stage.")
 
