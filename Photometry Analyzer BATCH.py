@@ -346,6 +346,7 @@ class PhotometryData:
             condition_event_names = ['Condition Event']
             variable_event_names = ['Variable Event']
             display_event_names = ['Whisker - Display Image']
+            time_event_names = ['Time']
             if filter_type in condition_event_names:
                 filter_event_abet = abet_data.loc[(abet_data[self.event_name_col] == str(filter_type)) & (
                             abet_data['Group_ID'] == str(int(filter_group))), :]
@@ -434,6 +435,30 @@ class PhotometryData:
                 event_data = event_data.reset_index(drop=True)
             elif filter_type in display_event_names:
                 return
+            elif filter_type in time_event_names:
+                for index, value in event_data.items():
+                    if filter_eval == '=':
+                        if float(event_data.loc['Time', index]) == float(filter_arg):
+                            event_data[index] = np.nan
+                    if filter_eval == '!=':
+                        if float(event_data.loc['Time', index]) != float(filter_arg):
+                            event_data[index] = np.nan
+                    if filter_eval == '<':
+                        if float(event_data.loc['Time', index]) >= float(filter_arg):
+                            event_data[index] = np.nan
+                    if filter_eval == '<=':
+                        if float(event_data.loc['Time', index]) > float(filter_arg):
+                            event_data[index] = np.nan
+                    if filter_eval == '>':
+                        if float(event_data.loc['Time', index]) <= float(filter_arg):
+                            event_data[index] = np.nan
+                    if filter_eval == '>':
+                        if float(event_data.loc['Time', index]) < float(filter_arg):
+                            event_data[index] = np.nan
+                
+                event_data = event_data.dropna()
+                event_data = event_data.reset_index(drop=True)
+
 
             return event_data
 
