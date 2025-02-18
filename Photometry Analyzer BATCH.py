@@ -559,7 +559,13 @@ class PhotometryData:
 
         self.doric_pd = pd.DataFrame(time_data)
         self.doric_pd['DeltaF'] = delta_f
-        self.doric_pd = self.doric_pd.rename(columns={0: 'Time', 1: 'DeltaF'})
+        self.doric_pd['Isobestic Unfiltered'] = f0_data
+        self.doric_pd['Active Unfiltered'] = f_data
+        self.doric_pd['Isobestic Filtered'] = filtered_f0
+        self.doric_pd['Active Filtered'] = filtered_f
+
+        self.doric_pd = self.doric_pd.rename(columns={0: 'Time', 1: 'DeltaF', 2: 'Isobestic Unfiltered', 3: 'Active Unfiltered',
+                                                      4: 'Isobestic Filtered', 5: 'Active Filtered'})
 
     """trial_separator - This function takes the extracted photometry data and parses it using the event data obtained
         from the previous functions. This function will check to make sure the events are the same length. 
@@ -656,6 +662,10 @@ class PhotometryData:
                 colname_2 = 'Z-Score Trial ' + str(trial_num)
                 colname_3 = 'Delta-F Trial ' + str(trial_num)
                 colname_4 = 'Percent-Change Trial ' + str(trial_num)
+                colname_5 = 'Isobestic Unfiltered Trial ' + str(trial_num)
+                colname_6 = 'Active Unfiltered Trial ' + str(trial_num)
+                colname_7 = 'Isobestic Filtered Trial ' + str(trial_num)
+                colname_8 = 'Active Filtered Trial ' + str(trial_num)
 
                 if trial_num == 1:
                     self.final_dataframe = trial_deltaf.loc[:, ('Time', 'zscore')]
@@ -686,6 +696,30 @@ class PhotometryData:
                     self.final_percent = self.final_percent.reset_index(drop=True)
                     self.final_percent = self.final_percent.rename(
                         columns={'Time': colname_1, 'percent_change': colname_2})
+                    
+                    self.partial_unfilteredchannel = trial_deltaf.loc[:, ('Isobestic Unfiltered', 'Active Unfiltered')]
+                    self.partial_unfilteredchannel = self.partial_unfilteredchannel.to_frame()
+                    self.partial_unfilteredchannel = self.partial_unfilteredchannel.reset_index(drop=True)
+                    self.partial_unfilteredchannel = self.partial_unfilteredchannel.rename(columns={'Isobestic Unfiltered' : colname_5,
+                                                                                           'Active Unfiltered': colname_6})
+                    
+                    self.final_unfilteredchannel = trial_deltaf.loc[:, ('Time', 'Isobestic Unfiltered', 'Active Unfiltered')]
+                    self.final_unfilteredchannel = self.final_unfilteredchannel.to_frame()
+                    self.final_unfilteredchannel = self.final_unfilteredchannel.reset_index(drop=True)
+                    self.final_unfilteredchannel = self.final_unfilteredchannel.rename(columns={'Time': colname_1,'Isobestic Unfiltered' : colname_5,
+                                                                                           'Active Unfiltered': colname_6})
+                    
+                    self.partial_filteredchannel = trial_deltaf.loc[:, ('Isobestic Filtered', 'Active Filtered')]
+                    self.partial_filteredchannel = self.partial_filteredchannel.to_frame()
+                    self.partial_filteredchannel = self.partial_filteredchannel.reset_index(drop=True)
+                    self.partial_filteredchannel = self.partial_filteredchannel.rename(columns={'Isobestic Filtered' : colname_7,
+                                                                                           'Active Filtered': colname_8})
+                    
+                    self.final_filteredchannel = trial_deltaf.loc[:, ('Time', 'Isobestic Filtered', 'Active Filtered')]
+                    self.final_filteredchannel = self.final_filteredchannel.to_frame()
+                    self.final_filteredchannel = self.final_filteredchannel.reset_index(drop=True)
+                    self.final_filteredchannel = self.final_filteredchannel.rename(columns={'Time': colname_1,'Isobestic Filtered' : colname_7,
+                                                                                           'Active Filtered': colname_8})
 
                     trial_num += 1
                 else:
@@ -707,9 +741,19 @@ class PhotometryData:
                             self.partial_percent.index.union(new_index))
                         self.final_percent = self.final_percent.reindex(
                             self.final_percent.index.union(new_index))
+                        self.partial_unfilteredchannel = self.partial_unfilteredchannel.reindex(
+                            self.partial_unfilteredchannel.index.union(new_index))
+                        self.final_unfilteredchannel = self.final_unfilteredchannel.reindex(
+                            self.final_unfilteredchannel.index.union(new_index))
+                        self.partial_filteredchannel = self.partial_filteredchannel.reindex(
+                            self.partial_filteredchannel.index.union(new_index))
+                        self.final_filteredchannel = self.final_filteredchannel.reindex(
+                            self.final_filteredchannel.index.union(new_index))
 
                     trial_deltaf = trial_deltaf.rename(columns={'Time': colname_1, 'zscore': colname_2,
-                                                                'DeltaF': colname_3, 'percent_change': colname_4})
+                                                                'DeltaF': colname_3, 'percent_change': colname_4,
+                                                                'Isobestic Unfiltered': colname_5, 'Active Unfiltered': colname_6,
+                                                                'Isobestic Filtered': colname_7, 'Active Filtered': colname_8})
 
                     self.partial_dataframe = pd.concat([self.partial_dataframe, trial_deltaf[colname_2]],
                                                        axis=1)
@@ -725,6 +769,14 @@ class PhotometryData:
                     self.final_percent = pd.concat(
                         [self.final_percent, trial_deltaf[colname_1], trial_deltaf[colname_4]],
                         axis=1)
+                    self.partial_unfilteredchannel = pd.concat(
+                        [self.partial_unfilteredchannel, trial_deltaf[colname_5], trial_deltaf[colname_6]], axis=1)
+                    self.final_unfilteredchannel = pd.concat(
+                        [self.final_unfilteredchannel, trial_deltaf[colname_1], trial_deltaf[colname_5], trial_deltaf[colname_6]], axis=1)
+                    self.partial_filteredchannel = pd.concat(
+                        [self.partial_filteredchannel, trial_deltaf[colname_5], trial_deltaf[colname_6]], axis=1)
+                    self.final_filteredchannel = pd.concat(
+                        [self.final_filteredchannel, trial_deltaf[colname_1], trial_deltaf[colname_5], trial_deltaf[colname_6]], axis=1)
                     trial_num += 1
 
         elif trial_definition in trial_definition_ind_list:
@@ -819,6 +871,10 @@ class PhotometryData:
                 colname_2 = 'Z-Score Trial ' + str(trial_num)
                 colname_3 = 'Delta-F Trial ' + str(trial_num)
                 colname_4 = 'Percent-Change Trial ' + str(trial_num)
+                colname_5 = 'Isobestic Unfiltered Trial ' + str(trial_num)
+                colname_6 = 'Active Unfiltered Trial ' + str(trial_num)
+                colname_7 = 'Isobestic Filtered Trial ' + str(trial_num)
+                colname_8 = 'Active Filtered Trial ' + str(trial_num)
 
                 if trial_num == 1:
                     self.final_dataframe = trial_deltaf.loc[:, ('Time', 'zscore')]
@@ -849,6 +905,31 @@ class PhotometryData:
                     self.final_percent = self.final_percent.reset_index(drop=True)
                     self.final_percent = self.final_percent.rename(
                         columns={'Time': colname_1, 'percent_change': colname_4})
+                    
+                    self.partial_unfilteredchannel = trial_deltaf.loc[:, ('Isobestic Unfiltered', 'Active Unfiltered')]
+                    self.partial_unfilteredchannel = self.partial_unfilteredchannel.to_frame()
+                    self.partial_unfilteredchannel = self.partial_unfilteredchannel.reset_index(drop=True)
+                    self.partial_unfilteredchannel = self.partial_unfilteredchannel.rename(columns={'Isobestic Unfiltered' : colname_5,
+                                                                                           'Active Unfiltered': colname_6})
+                    
+                    self.final_unfilteredchannel = trial_deltaf.loc[:, ('Time', 'Isobestic Unfiltered', 'Active Unfiltered')]
+                    self.final_unfilteredchannel = self.final_unfilteredchannel.to_frame()
+                    self.final_unfilteredchannel = self.final_unfilteredchannel.reset_index(drop=True)
+                    self.final_unfilteredchannel = self.final_unfilteredchannel.rename(columns={'Time': colname_1,'Isobestic Unfiltered' : colname_5,
+                                                                                           'Active Unfiltered': colname_6})
+                    
+                    self.partial_filteredchannel = trial_deltaf.loc[:, ('Isobestic Filtered', 'Active Filtered')]
+                    self.partial_filteredchannel = self.partial_filteredchannel.to_frame()
+                    self.partial_filteredchannel = self.partial_filteredchannel.reset_index(drop=True)
+                    self.partial_filteredchannel = self.partial_filteredchannel.rename(columns={'Isobestic Filtered' : colname_7,
+                                                                                           'Active Filtered': colname_8})
+                    
+                    self.final_filteredchannel = trial_deltaf.loc[:, ('Time', 'Isobestic Filtered', 'Active Filtered')]
+                    self.final_filteredchannel = self.final_filteredchannel.to_frame()
+                    self.final_filteredchannel = self.final_filteredchannel.reset_index(drop=True)
+                    self.final_filteredchannel = self.final_filteredchannel.rename(columns={'Time': colname_1,'Isobestic Filtered' : colname_7,
+                                                                                           'Active Filtered': colname_8})
+
 
                     trial_num += 1
                 else:
@@ -870,9 +951,19 @@ class PhotometryData:
                             self.partial_percent.index.union(new_index))
                         self.final_percent = self.final_percent.reindex(
                             self.final_percent.index.union(new_index))
+                        self.partial_unfilteredchannel = self.partial_unfilteredchannel.reindex(
+                            self.partial_unfilteredchannel.index.union(new_index))
+                        self.final_unfilteredchannel = self.final_unfilteredchannel.reindex(
+                            self.final_unfilteredchannel.index.union(new_index))
+                        self.partial_filteredchannel = self.partial_filteredchannel.reindex(
+                            self.partial_filteredchannel.index.union(new_index))
+                        self.final_filteredchannel = self.final_filteredchannel.reindex(
+                            self.final_filteredchannel.index.union(new_index))
 
                     trial_deltaf = trial_deltaf.rename(columns={'Time': colname_1, 'zscore': colname_2,
-                                                                'DeltaF': colname_3, 'percent_change': colname_4})
+                                                                'DeltaF': colname_3, 'percent_change': colname_4,
+                                                                'Isobestic Unfiltered': colname_5, 'Active Unfiltered': colname_6,
+                                                                'Isobestic Filtered': colname_7, 'Active Filtered': colname_8})
 
                     self.partial_dataframe = pd.concat([self.partial_dataframe, trial_deltaf[colname_2]],
                                                        axis=1)
@@ -888,6 +979,15 @@ class PhotometryData:
                     self.final_percent = pd.concat(
                         [self.final_percent, trial_deltaf[colname_1], trial_deltaf[colname_4]],
                         axis=1)
+                    self.partial_unfilteredchannel = pd.concat(
+                        [self.partial_unfilteredchannel, trial_deltaf[colname_5], trial_deltaf[colname_6]], axis=1)
+                    self.final_unfilteredchannel = pd.concat(
+                        [self.final_unfilteredchannel, trial_deltaf[colname_1], trial_deltaf[colname_5], trial_deltaf[colname_6]], axis=1)
+                    self.partial_filteredchannel = pd.concat(
+                        [self.partial_filteredchannel, trial_deltaf[colname_5], trial_deltaf[colname_6]], axis=1)
+                    self.final_filteredchannel = pd.concat(
+                        [self.final_filteredchannel, trial_deltaf[colname_1], trial_deltaf[colname_5], trial_deltaf[colname_6]], axis=1)
+                    trial_num += 1
                     trial_num += 1
 
         elif trial_definition in trial_definition_overall_list:
@@ -1051,6 +1151,10 @@ class PhotometryData:
         finalf_list = [5, 'TimedF', 'timedf']
         partialp_list = [3, 'SimpleP', 'simplep']
         finalp_list = [6, 'TimedP', 'timedp']
+        partial_unfiltered_list = [8, 'SimpleUnfiltered', 'simpleunfiltered']
+        final_unfiltered_list = [9, 'TimedUnfiltered', 'timedunfiltered']
+        partial_filtered_list = [8, 'SimpleFiltered', 'simplefiltered']
+        final_filtered_list = [9, 'TimedFiltered', 'timedfiltered']
 
         output_folder = self.main_folder_path + self.folder_symbol + 'Output'
         if not (os.path.isdir(output_folder)):
@@ -1081,6 +1185,14 @@ class PhotometryData:
             self.partial_percent.to_csv(file_path_string, index=False)
         elif output_data in finalp_list:
             self.final_percent.to_csv(file_path_string, index=False)
+        elif output_data in partial_unfiltered_list:
+            self.partial_unfilteredchannel.to_csv(file_path_string, index=False)
+        elif output_data in final_unfiltered_list:
+            self.final_unfilteredchannel.to_csv(file_path_string, index=False)
+        elif output_data in partial_filtered_list:
+            self.partial_filteredchannel.to_csv(file_path_string, index=False)
+        elif output_data in final_filtered_list:
+            self.final_filteredchannel.to_csv(file_path_string, index=False)
 
     def write_summary(self, output_data, summary_string, output_path, session_string):
 
@@ -1206,7 +1318,11 @@ run_simplep = int(config_file['Output']['create_simplep'])
 run_timedp = int(config_file['Output']['create_timedp'])
 run_simplef = int(config_file['Output']['create_simplef'])
 run_timedf = int(config_file['Output']['create_timedf'])
-run_raw = int(config_file['Output']['create_raw'])
+run_raw = int(config_file['Output']['create_f_raw'])
+run_simpleunfiltered = int(config_file['Output']['create_simpleunfiltered'])
+run_timedunfiltered = int(config_file['Output']['create_timedunfiltered'])
+run_simplefiltered = int(config_file['Output']['create_simplefiltered'])
+run_timedfiltered = int(config_file['Output']['create_timedfiltered'])
 run_summaryz = int(config_file['Output']['create_summaryz'])
 run_summaryf = int(config_file['Output']['create_summaryf'])
 run_summaryp = int(config_file['Output']['create_summaryp'])
@@ -1354,6 +1470,14 @@ for row_index, row in file_csv.iterrows():
         if run_summaryp == 1:
             analyzer.write_summary('SummaryP', summary_string, output_path, 
                                    file_string)
+        if run_simpleunfiltered == 1:
+            analyzer.write_data('SimpleUnfiltered', filename_override=file_dir)
+        if run_timedunfiltered == 1:
+            analyzer.write_data('TimedUnfiltered', filename_override=file_dir)
+        if run_simplefiltered == 1:
+            analyzer.write_data('SimpleFiltered', filename_override=file_dir)
+        if run_timedfiltered == 1:
+            analyzer.write_data('TimedFiltered', filename_override=file_dir)
         if run_raw == 1 and not raw_processed:
             file_path_raw = output_path + animal_id + '-' + schedule + '-' + date
             analyzer.write_data('Full', filename_override=file_path_raw)
