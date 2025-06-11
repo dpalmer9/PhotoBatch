@@ -1,5 +1,6 @@
 import sys
 import pandas as pd
+import os # Added for path manipulation
 import configparser
 from PySide6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout,
                                QPushButton, QLabel, QFileDialog, QLineEdit, QTableWidget,
@@ -56,8 +57,22 @@ class FiberPhotometryApp(QMainWindow):
         self.resize(1200, 800)  # Set a larger default window size
 
         # Initialize configuration
+        # Determine the absolute path to the script's directory
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        # Construct the path to Config.ini, assuming it's one level up from script_dir
+        self.config_file_path = os.path.normpath(os.path.join(script_dir, '..', 'Config.ini'))
+        
         self.config = configparser.ConfigParser()
-        self.config.read('config.ini')
+        try:
+            if not self.config.read(self.config_file_path):
+                QMessageBox.warning(self, "Config File Warning", 
+                                    f"Config file '{self.config_file_path}' not found or empty. "
+                                    "Defaults may not be loaded correctly.")
+        except configparser.Error as e:
+            QMessageBox.critical(self, "Config File Error", 
+                                 f"Error reading config file '{self.config_file_path}': {e}")
+            # Application might not function correctly, consider exiting or using hardcoded defaults
+
 
         # Initialize template data
         self.template_loaded = False
@@ -107,6 +122,14 @@ class FiberPhotometryApp(QMainWindow):
         import_template_action = QAction("Import Template Behaviour File", self)
         import_template_action.triggered.connect(self.import_template_behaviour_file)
         file_menu.addAction(import_template_action)
+
+        load_config_action = QAction("Load Configuration...", self)
+        load_config_action.triggered.connect(self.load_configuration_file)
+        file_menu.addAction(load_config_action)
+
+        save_config_as_action = QAction("Save Configuration As...", self)
+        save_config_as_action.triggered.connect(self.save_configuration_as)
+        file_menu.addAction(save_config_as_action)
 
     def import_template_behaviour_file(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Import Template Behaviour File", "", "CSV Files (*.csv)")
@@ -366,8 +389,48 @@ class FiberPhotometryApp(QMainWindow):
 
     def init_analysis_tab(self):
         layout = QVBoxLayout()
-        layout.addWidget(QLabel("Configure and Run Analysis"))
+        layout.addWidget(QLabel("Configure Analysis Options and Run")) # Updated label for clarity
+
+        # Add Output section UI elements here
+        if "Output" in self.config:
+            output_group_box = QGroupBox("Output")
+            output_group_layout = QFormLayout()
+            section_name = "Output"  # Explicitly use "Output" for clarity
+
+            for key in self.config[section_name]:
+                value = self.config[section_name][key]
+                display_key = key.replace("_", " ")
+                widget_attr_name = f"{section_name}_{key}_checkbox" # e.g., self.Output_save_raw_data_checkbox
+
+                # Output section in Config.ini is expected to have boolean-like values for checkboxes
+                checkbox = QCheckBox()
+                checkbox.setChecked(value.lower() == 'true' or value == '1')
+                output_group_layout.addRow(display_key, checkbox)
+                setattr(self, widget_attr_name, checkbox)
+
+            output_group_box.setLayout(output_group_layout)
+            layout.addWidget(output_group_box)
+
+        # Add a spacer to push the button to the bottom, or just add it directly
+        layout.addStretch(1) # Optional: adds space above the button
+
+        # Run Analysis Button
+        self.run_analysis_button = QPushButton("Run Analysis")
+        self.run_analysis_button.clicked.connect(self.run_analysis_action)
+        layout.addWidget(self.run_analysis_button)
+
         self.analysis_tab.setLayout(layout)
+
+    def run_analysis_action(self):
+        # Placeholder for when the "Run Analysis" button is clicked
+        QMessageBox.information(self, "Analysis", "Run Analysis button clicked! Implement analysis logic here.")
+        print("Run Analysis button clicked!")
+        # TODO: Implement the actual analysis logic here
+        # This might involve:
+        # 1. Reading data from the event sheet and file pair tabs.
+        # 2. Using the configuration from self.config (including the Output options).
+        # 3. Performing calculations using your PhotometryData class or similar.
+        # 4. Displaying results in the Results tab or saving files.
 
     def init_results_tab(self):
         layout = QVBoxLayout()
@@ -377,79 +440,159 @@ class FiberPhotometryApp(QMainWindow):
     def init_options_tab(self):
         main_layout = QVBoxLayout()
 
-        # Filter out file and event sheet sections
-        excluded_sections = {'Filepath', 'Event_Window'}
+        # Define which keys should use MultiSelectComboBox
         multibox_options = ['trial_start_stage','trial_end_stage','exclusion_list']
 
         # Create a group for each section and add its fields
         for section in self.config.sections():
-            if section not in excluded_sections:
-                group_box = QGroupBox(section.replace("_", " "))  # Section title
-                group_layout = QFormLayout()
+            if section == "Output":  # Skip the Output section as it's now in the Analysis tab
+                continue
 
-                # Create fields for each parameter within the section
-                for key, value in self.config[section].items():
-                    display_key = key.replace("_", " ")  # Replace underscores with spaces
+            group_box = QGroupBox(section.replace("_", " "))  # Section title
+            group_layout = QFormLayout()
 
-                    if section == "Output":
-                        # Use a checkbox for Output parameters
-                        checkbox = QCheckBox()
-                        checkbox.setChecked(value.lower() == 'true')
-                        group_layout.addRow(display_key, checkbox)
-                        setattr(self, f"{section}_{key}_checkbox", checkbox)  # Store checkbox for saving
-                    elif key in multibox_options:
-                        multicombobox_edit = MultiSelectComboBox()
-                        setattr(self, f"{section}_{key}_multicombobox_edit", multicombobox_edit)  # Store line edit for saving
-                        group_layout.addRow(display_key, getattr(self, f"{section}_{key}_multicombobox_edit"))
-                    else:
-                        # Use line edit for other parameters
-                        line_edit = QLineEdit(value)
-                        setattr(self, f"{section}_{key}_line_edit", line_edit)  # Store line edit for saving
-                        group_layout.addRow(display_key, getattr(self, f"{section}_{key}_line_edit"))
+            # Create fields for each parameter within the section
+            for key in self.config[section]:  # Iterate over keys
+                value = self.config[section][key]
+                display_key = key.replace("_", " ")  # Replace underscores with spaces
+                widget_attr_base = f"{section}_{key}"
 
-                group_box.setLayout(group_layout)
-                main_layout.addWidget(group_box)
+                if key in multibox_options: # This check remains for other sections
+                    multicombobox_edit = MultiSelectComboBox()
+                    setattr(self, f"{widget_attr_base}_multicombobox_edit", multicombobox_edit)
+                    
+                    # Populate with values from config.ini and check them
+                    if value:
+                        config_items = [item.strip() for item in value.split(',') if item.strip()]
+                        for item_text in config_items:
+                            multicombobox_edit.add_option(item_text) # Adds if not present
+                            # Find and check the item
+                            for i in range(multicombobox_edit.list_widget.count()):
+                                list_item = multicombobox_edit.list_widget.item(i)
+                                if list_item.text() == item_text:
+                                    list_item.setCheckState(Qt.Checked)
+                                    break
+                    group_layout.addRow(display_key, multicombobox_edit)
+                # Check if the section is "Output" and handle as checkbox (moved to init_analysis_tab)
+                # For other sections, if it's boolean-like, treat as checkbox (e.g. if you add more boolean options to other sections)
+                elif value.lower() in ['true', 'false', '1', '0'] and section != "Output": # Example for other potential checkboxes
+                    checkbox = QCheckBox() # This part is illustrative for other sections
+                    checkbox.setChecked(value.lower() == 'true' or value == '1')
+                    group_layout.addRow(display_key, multicombobox_edit)
+                else:
+                    line_edit = QLineEdit(value)
+                    setattr(self, f"{widget_attr_base}_line_edit", line_edit)
+                    group_layout.addRow(display_key, line_edit)
+
+            group_box.setLayout(group_layout)
+            main_layout.addWidget(group_box)
 
         # Save Button
         save_button = QPushButton("Save Changes")
-        save_button.clicked.connect(self.save_config_changes)
+        save_button.clicked.connect(self.save_config_changes_to_current_file)
         main_layout.addWidget(save_button)
 
         self.options_tab.setLayout(main_layout)
 
     def update_options_with_template(self):
         if self.template_loaded:
+            # Define which MultiSelectComboBox widgets to update
+            widgets_to_update = [
+                'ITI_Window_trial_start_stage_multicombobox_edit',
+                'ITI_Window_trial_end_stage_multicombobox_edit',
+                'Filter_exclusion_list_multicombobox_edit'
+            ]
             for stage in self.trial_stage_options:
-                try:
-                    getattr(self, 'ITI_Window_trial_start_stage_multicombobox_edit').add_option(stage)
-                    getattr(self, 'ITI_Window_trial_end_stage_multicombobox_edit').add_option(stage)
-                    getattr(self, 'Filter_exclusion_list_multicombobox_edit').add_option(stage)
-                except:
-                    print('No files loaded')
+                for widget_name in widgets_to_update:
+                    if hasattr(self, widget_name):
+                        widget = getattr(self, widget_name)
+                        if isinstance(widget, MultiSelectComboBox):
+                            widget.add_option(stage)
+                    else:
+                        print(f"Warning: Widget {widget_name} not found while updating options with template.")
         else:
             QMessageBox.warning(self, "Error", "No template loaded, cannot update trial start stage.")
 
-    def save_config_changes(self):
+    def update_ui_from_config(self):
+        """Updates the UI elements in the Options tab from the current self.config."""
+        multibox_options = ['trial_start_stage','trial_end_stage','exclusion_list']
+        for section in self.config.sections():
+            for key in self.config[section]:
+                value = self.config[section][key]
+                widget_attr_base = f"{section}_{key}"
+
+                if hasattr(self, f"{widget_attr_base}_checkbox"):
+                    widget = getattr(self, f"{widget_attr_base}_checkbox")
+                    widget.setChecked(value.lower() == 'true' or value == '1')
+                elif hasattr(self, f"{widget_attr_base}_multicombobox_edit"):
+                    widget = getattr(self, f"{widget_attr_base}_multicombobox_edit")
+                    config_values_list = [v.strip() for v in value.split(',') if v.strip()]
+
+                    # Uncheck all existing items
+                    for i in range(widget.list_widget.count()):
+                        widget.list_widget.item(i).setCheckState(Qt.Unchecked)
+
+                    # Add/check items from new config
+                    for val_from_config in config_values_list:
+                        found = any(widget.list_widget.item(i).text() == val_from_config for i in range(widget.list_widget.count()))
+                        if not found:
+                            widget.add_option(val_from_config) # Adds as unchecked
+                        
+                        # Find and check
+                        for i in range(widget.list_widget.count()):
+                            item = widget.list_widget.item(i)
+                            if item.text() == val_from_config:
+                                item.setCheckState(Qt.Checked)
+                                break
+                elif hasattr(self, f"{widget_attr_base}_line_edit"):
+                    widget = getattr(self, f"{widget_attr_base}_line_edit")
+                    widget.setText(value)
+        # After updating UI from config, if a template is loaded, ensure its options are available
+        if self.template_loaded:
+            self.update_options_with_template()
+
+    def save_config_changes_to_current_file(self):
         # Update config with new values from form
         for section in self.config.sections():
             for key in self.config[section]:
-                widget = getattr(self, f"{section}_{key}_line_edit", None) or getattr(self, f"{section}_{key}_checkbox",
-                                                                                      None)
+                widget_attr_base = f"{section}_{key}"
+                widget = getattr(self, f"{widget_attr_base}_line_edit", None) or \
+                         getattr(self, f"{widget_attr_base}_checkbox", None) or \
+                         getattr(self, f"{widget_attr_base}_multicombobox_edit", None)
+
                 if isinstance(widget, QLineEdit):
                     self.config[section][key] = widget.text()
                 elif isinstance(widget, QCheckBox):
                     self.config[section][key] = 'true' if widget.isChecked() else 'false'
+                elif isinstance(widget, MultiSelectComboBox):
+                    checked_items = widget.get_checked_items()
+                    self.config[section][key] = ",".join(checked_items)
+                    
+        try:
+            with open(self.config_file_path, 'w') as configfile:
+                self.config.write(configfile)
+            QMessageBox.information(self, "Saved", f"Configuration changes saved successfully to {self.config_file_path}.")
+        except IOError as e:
+            QMessageBox.critical(self, "Save Error", f"Failed to save configuration to {self.config_file_path}: {e}")
 
-        # Save to config.ini file
-        with open('../Config.ini', 'w') as configfile:
-            self.config.write(configfile)
+    def load_configuration_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Load Configuration File", "", "INI Files (*.ini)")
+        if file_path:
+            self.config_file_path = file_path
+            self.config = configparser.ConfigParser()
+            try:
+                if not self.config.read(self.config_file_path):
+                     QMessageBox.warning(self, "Load Warning", f"Configuration file {self.config_file_path} not found or empty.")
+                     return # Or load defaults / clear UI
+                self.update_ui_from_config() # Refresh UI with new config values
+                QMessageBox.information(self, "Loaded", f"Configuration loaded from: {self.config_file_path}")
+            except configparser.Error as e:
+                 QMessageBox.critical(self, "Load Error", f"Error reading configuration file {self.config_file_path}: {e}")
+            except Exception as e:
+                 QMessageBox.critical(self, "Load Error", f"An unexpected error occurred while loading configuration: {e}")
 
-        # Confirmation message
-        QMessageBox.information(self, "Saved", "Configuration changes saved successfully.")
-
-
-#if __name__ == "__main__":
-    #app = QApplication(sys.argv)
-    #window = FiberPhotometryApp()
-    #window.show()
-    #sys.exit(app.exec())
+    def save_configuration_as(self):
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Configuration As...", "", "INI Files (*.ini)")
+        if file_path:
+            self.config_file_path = file_path
+            self.save_config_changes_to_current_file() # This will save current UI state to the new file path
