@@ -392,8 +392,12 @@ class PhotometryData:
                         sub_values[sub_values < 0] = np.nan
                     sub_index = sub_values.abs().idxmin(skipna=True)
                     filter_value = filter_event_abet.loc[sub_index, 'Arg1_Value']
+                    
+                    if ',' in filter_arg:
+                        filter_arg = filter_arg.split(',')
+
                     if isinstance(filter_arg,str):
-                        filter_arg_test = filter_arg.replace(".","",1)
+                        filter_arg_test = filter_arg.replace(",","",1)
                         if not filter_arg_test.isdigit():
                             filter_val_abet = abet_data.loc[(abet_data[self.event_name_col] == 'Variable Event') & (
                                 abet_data['Item_Name'] == str(filter_arg)), :]
@@ -402,9 +406,6 @@ class PhotometryData:
                             print(arg_index[0])
                             filter_arg = filter_val_abet.loc[filter_val_abet.index[arg_index[0]],'Arg1_Value']
                     
-                    # Equals
-                    if ',' in filter_arg:
-                        filter_arg = filter_arg.split(',')
                         
                     if filter_eval == "inlist":
                         if filter_value not in filter_arg:
@@ -907,25 +908,25 @@ class PhotometryData:
                         columns={'Time': colname_1, 'percent_change': colname_4})
                     
                     self.partial_unfilteredchannel = trial_deltaf.loc[:, ('Isobestic Unfiltered', 'Active Unfiltered')]
-                    self.partial_unfilteredchannel = self.partial_unfilteredchannel.to_frame()
+                    #self.partial_unfilteredchannel = self.partial_unfilteredchannel.to_frame()
                     self.partial_unfilteredchannel = self.partial_unfilteredchannel.reset_index(drop=True)
                     self.partial_unfilteredchannel = self.partial_unfilteredchannel.rename(columns={'Isobestic Unfiltered' : colname_5,
                                                                                            'Active Unfiltered': colname_6})
                     
                     self.final_unfilteredchannel = trial_deltaf.loc[:, ('Time', 'Isobestic Unfiltered', 'Active Unfiltered')]
-                    self.final_unfilteredchannel = self.final_unfilteredchannel.to_frame()
+                    #self.final_unfilteredchannel = self.final_unfilteredchannel.to_frame()
                     self.final_unfilteredchannel = self.final_unfilteredchannel.reset_index(drop=True)
                     self.final_unfilteredchannel = self.final_unfilteredchannel.rename(columns={'Time': colname_1,'Isobestic Unfiltered' : colname_5,
                                                                                            'Active Unfiltered': colname_6})
                     
                     self.partial_filteredchannel = trial_deltaf.loc[:, ('Isobestic Filtered', 'Active Filtered')]
-                    self.partial_filteredchannel = self.partial_filteredchannel.to_frame()
+                    #self.partial_filteredchannel = self.partial_filteredchannel.to_frame()
                     self.partial_filteredchannel = self.partial_filteredchannel.reset_index(drop=True)
                     self.partial_filteredchannel = self.partial_filteredchannel.rename(columns={'Isobestic Filtered' : colname_7,
                                                                                            'Active Filtered': colname_8})
                     
                     self.final_filteredchannel = trial_deltaf.loc[:, ('Time', 'Isobestic Filtered', 'Active Filtered')]
-                    self.final_filteredchannel = self.final_filteredchannel.to_frame()
+                    #self.final_filteredchannel = self.final_filteredchannel.to_frame()
                     self.final_filteredchannel = self.final_filteredchannel.reset_index(drop=True)
                     self.final_filteredchannel = self.final_filteredchannel.rename(columns={'Time': colname_1,'Isobestic Filtered' : colname_7,
                                                                                            'Active Filtered': colname_8})
