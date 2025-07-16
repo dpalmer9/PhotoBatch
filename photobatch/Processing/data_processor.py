@@ -8,6 +8,8 @@ from scipy import signal
 import numpy as np
 import pandas as pd
 import h5py
+import multiprocessing
+from sklearn.linear_model import LinearRegression
 
 pd.set_option('mode.chained_assignment', None)
 
@@ -490,17 +492,31 @@ class PhotometryData:
             print('ABET II File missing TTL Pulse Output. Ending Analysis.')
             return
 
-        doric_time = doric_ttl_active.iloc[0, 0]
-        doric_time = doric_time.astype(float)
-        doric_time = doric_time.item(0)
-        abet_time = abet_ttl_active.iloc[0, 0]
-        abet_time = float(abet_time)
+        doric_ttl_times = doric_ttl_active['Time'].values
+        abet_ttl_times = abet_ttl_active.iloc[:, 0].values
 
-        self.abet_doric_sync_value = doric_time - abet_time
+        # Find corresponding TTL pulses.  Assume Doric has more pulses.
+        # This is a simplified approach; a more robust method might be needed for noisy data.
+        paired_doric_times = []
+        paired_abet_times = []
+        doric_index = 0
+        for abet_time in abet_ttl_times:
+            while doric_index < len(doric_ttl_times) and doric_ttl_times[doric_index] < abet_time:
+                doric_index += 1
+            if doric_index < len(doric_ttl_times):  # Found a Doric pulse after the ABET pulse
+                paired_doric_times.append(doric_ttl_times[doric_index])
+                paired_abet_times.append(abet_time)
+            else:
+                break  # No more Doric pulses
 
-        self.doric_time = pd.to_numeric(self.doric_pandas['Time'])
+        if not paired_doric_times:
+            print("No matching TTL pulses found. Synchronization failed.")
+            return
 
-        self.doric_pandas['Time'] = self.doric_time - self.abet_doric_sync_value
+        #  Use linear regression on the *paired* TTL pulses
+        ttl_model = LinearRegression()
+        ttl_model.fit(np.array(paired_doric_times).reshape(-1, 1), paired_abet_times)
+        self.doric_pandas['Time'] = (self.doric_pandas['Time'] * ttl_model.coef_[0]) + ttl_model.intercept_
 
     """doric_process - This function calculates the delta-f value based on the isobestic and active channel data.
         The two channels are first put through a 2nd order low-pass butterworth filter with a user-specified cutoff. 
@@ -548,7 +564,7 @@ class PhotometryData:
         trial_iti_pad = How long in the pre-trial time space for normalization
         center_method = Determine whether median or mean is used to generate z-values"""
 
-    def trial_separator(self, trial_normalize='whole', normalize_side='Left', trial_definition=False,
+    def trial_separator(self, trial_normalize='whole', normalize_side='Left',
                         trial_iti_pad=0,
                         center_method='mean'):
         if not self.abet_loaded:
@@ -556,490 +572,197 @@ class PhotometryData:
         left_selection_list = ['Left', 'Before', 'L', 'l', 'left', 'before', 1]
         right_selection_list = ['Right', 'right', 'R', 'r', 'After', 'after', 2]
 
-        trial_definition_none_list = ['None', 0, '0', 'No', False]
-        trial_definition_ind_list = ['Individual', 1, '1', 'Ind', 'Indv']
-        trial_definition_overall_list = ['Overall', 2, '2']
-
         trial_num = 1
 
         self.abet_time_list = self.abet_event_times
 
         length_time = self.abet_time_list.iloc[0, 1] - self.abet_time_list.iloc[0, 0]
         measurements_per_interval = length_time * self.sample_frequency
-        if trial_definition in trial_definition_none_list:
-            for index, row in self.abet_time_list.iterrows():
+        doric_time_series = self.doric_pd[['Time']]
+        for index, row in self.abet_time_list.iterrows():
+            try:
+                start_time = self.abet_time_list.loc[index, 'Start_Time']
+                start_index = pd.merge_asof(left=pd.DataFrame({'Time': [start_time]}), right=doric_time_series, on='Time', direction='nearest').index[0]
+            except IndexError:
+                print('Trial Start Out of Bounds, Skipping Event')
+                continue
+            try:
+                end_time = self.abet_time_list.loc[index, 'End_Time']
+                end_index = pd.merge_asof(left=pd.DataFrame({'Time': [end_time]}), right=doric_time_series, on='Time', direction='nearest').index[0]
+            except IndexError:
+                print('Trial End Out of Bounds, Skipping Event')
+                continue
 
-                try:
-                    start_index = self.doric_pd['Time'].sub(self.abet_time_list.loc[index, 'Start_Time']).abs().idxmin()
-                except IndexError:
-                    print('Trial Start Out of Bounds, Skipping Event')
-                    continue
-                try:
-                    end_index = self.doric_pd['Time'].sub(self.abet_time_list.loc[index, 'End_Time']).abs().idxmin()
-                except IndexError:
-                    print('Trial End Out of Bounds, Skipping Event')
-                    continue
-
+            try:
                 while self.doric_pd.iloc[start_index, 0] > self.abet_time_list.loc[index, 'Start_Time']:
                     start_index -= 1
+            except IndexError:
+                continue
 
+            try:
                 while self.doric_pd.iloc[end_index, 0] < self.abet_time_list.loc[index, 'End_Time']:
                     end_index += 1
+            except IndexError:
+                continue
 
-                while len(range(start_index, (end_index + 1))) < measurements_per_interval:
-                    end_index += 1
+            while len(range(start_index, (end_index + 1))) < measurements_per_interval:
+                end_index += 1
 
-                while len(range(start_index, (end_index + 1))) > measurements_per_interval:
-                    end_index -= 1
+            while len(range(start_index, (end_index + 1))) > measurements_per_interval:
+                end_index -= 1
 
-                trial_deltaf = self.doric_pd.iloc[start_index:end_index]
-                iti_deltaf = np.empty([1, 1])
-                z_mean = np.empty([1, 1])
-                z_sd = np.empty([1, 1])
-
-                if not trial_normalize:
-                    if normalize_side in left_selection_list:
-                        norm_end_time = self.abet_time_list.loc[index, 'Start_Time'] + trial_iti_pad
-                        iti_deltaf = trial_deltaf.loc[
-                            trial_deltaf['Time'] < norm_end_time, 'DeltaF']
-                    elif normalize_side in right_selection_list:
-                        norm_start_time = self.abet_time_list.loc[index, 'End_Time'] - trial_iti_pad
-                        iti_deltaf = trial_deltaf.loc[
-                            trial_deltaf['Time'] > norm_start_time, 'DeltaF']
-                    if center_method == 'mean':
-                        z_mean = iti_deltaf.mean()
-                        z_sd = iti_deltaf.std()
-                    elif center_method == 'median':
-                        z_mean = iti_deltaf.median()
-                        z_dev = np.absolute(np.subtract(iti_deltaf, z_mean))
-                        z_sd = z_dev.median()
+            trial_deltaf = self.doric_pd.iloc[start_index:end_index]
+            if trial_normalize == 'iti':
+                if normalize_side in left_selection_list:
+                    trial_start_index_diff = self.trial_definition_times.loc[:, 'Start_Time'].sub(
+                        (self.abet_time_list.loc[index, 'Start_Time'] + self.extra_prior))  # .abs().idxmin()
+                    trial_start_index_diff[trial_start_index_diff > 0] = np.nan
+                    trial_start_index = trial_start_index_diff.abs().idxmin(skipna=True)
+                    trial_start_window = self.trial_definition_times.iloc[trial_start_index, 0]
+                    trial_iti_window = trial_start_window - float(trial_iti_pad)
+                    iti_data = self.doric_pd.loc[(self.doric_pd.loc[:, 'Time'] >= trial_iti_window) & (
+                                self.doric_pd.loc[:, 'Time'] <= trial_start_window), 'DeltaF']
                 else:
-                    deltaf_split = trial_deltaf.loc[:, 'DeltaF']
-                    if center_method == 'mean':
-                        z_mean = deltaf_split.mean()
-                        z_sd = deltaf_split.std()
-                    elif center_method == 'median':
-                        z_mean = deltaf_split.median()
-                        z_dev = np.absolute(np.subtract(deltaf_split, z_mean))
-                        z_sd = z_dev.median()
-
-                trial_deltaf.loc[:, 'zscore'] = (trial_deltaf.loc[:, 'DeltaF'] - z_mean) / z_sd
-                trial_deltaf.loc[:, 'percent_change'] = trial_deltaf.loc[:, 'DeltaF'].map(
-                    lambda x: ((x - z_mean) / abs(z_mean)) * 100)
-
-                colname_1 = 'Time Trial ' + str(trial_num)
-                colname_2 = 'Z-Score Trial ' + str(trial_num)
-                colname_3 = 'Delta-F Trial ' + str(trial_num)
-                colname_4 = 'Percent-Change Trial ' + str(trial_num)
-
-                if trial_num == 1:
-                    self.final_dataframe = trial_deltaf.loc[:, ('Time', 'zscore')]
-                    self.final_dataframe = self.final_dataframe.reset_index(drop=True)
-                    self.final_dataframe = self.final_dataframe.rename(
-                        columns={'Time': colname_1, 'zscore': colname_2})
-
-                    self.partial_dataframe = trial_deltaf.loc[:, 'zscore']
-                    self.partial_dataframe = self.partial_dataframe.to_frame()
-                    self.partial_dataframe = self.partial_dataframe.reset_index(drop=True)
-                    self.partial_dataframe = self.partial_dataframe.rename(columns={'zscore': colname_2})
-
-                    self.partial_deltaf = trial_deltaf.loc[:, 'DeltaF']
-                    self.partial_deltaf = self.partial_deltaf.to_frame()
-                    self.partial_deltaf = self.partial_deltaf.reset_index(drop=True)
-                    self.partial_deltaf = self.partial_deltaf.rename(columns={'DeltaF': colname_2})
-
-                    self.final_deltaf = trial_deltaf.loc[:, ('Time', 'DeltaF')]
-                    self.final_deltaf = self.final_deltaf.reset_index(drop=True)
-                    self.final_deltaf = self.final_deltaf.rename(columns={'Time': colname_1, 'DeltaF': colname_2})
-
-                    self.partial_percent = trial_deltaf.loc[:, 'percent_change']
-                    self.partial_percent = self.partial_percent.to_frame()
-                    self.partial_percent = self.partial_percent.reset_index(drop=True)
-                    self.partial_percent = self.partial_percent.rename(columns={'percent_change': colname_2})
-
-                    self.final_percent = trial_deltaf.loc[:, ('Time', 'percent_change')]
-                    self.final_percent = self.final_percent.reset_index(drop=True)
-                    self.final_percent = self.final_percent.rename(
-                        columns={'Time': colname_1, 'percent_change': colname_2})
-
-                    trial_num += 1
-                else:
-                    trial_deltaf = trial_deltaf.reset_index(drop=True)
-                    dataframe_len = len(self.final_dataframe.index)
-                    trial_len = len(trial_deltaf.index)
-                    if trial_len > dataframe_len:
-                        len_diff = trial_len - dataframe_len
-                        new_index = list(range(dataframe_len, (dataframe_len + len_diff)))
-                        self.final_dataframe = self.final_dataframe.reindex(
-                            self.final_dataframe.index.union(new_index))
-                        self.partial_dataframe = self.partial_dataframe.reindex(
-                            self.partial_dataframe.index.union(new_index))
-                        self.partial_deltaf = self.partial_deltaf.reindex(
-                            self.partial_deltaf.index.union(new_index))
-                        self.final_deltaf = self.final_deltaf.reindex(
-                            self.final_deltaf.index.union(new_index))
-                        self.partial_percent = self.partial_percent.reindex(
-                            self.partial_percent.index.union(new_index))
-                        self.final_percent = self.final_percent.reindex(
-                            self.final_percent.index.union(new_index))
-
-                    trial_deltaf = trial_deltaf.rename(columns={'Time': colname_1, 'zscore': colname_2,
-                                                                'DeltaF': colname_3, 'percent_change': colname_4})
-
-                    self.partial_dataframe = pd.concat([self.partial_dataframe, trial_deltaf[colname_2]],
-                                                       axis=1)
-                    self.partial_deltaf = pd.concat([self.partial_deltaf, trial_deltaf[colname_3]],
-                                                    axis=1)
-                    self.final_dataframe = pd.concat(
-                        [self.final_dataframe, trial_deltaf[colname_1], trial_deltaf[colname_2]],
-                        axis=1)
-                    self.final_deltaf = pd.concat([self.final_deltaf, trial_deltaf[colname_1], trial_deltaf[colname_3]],
-                                                  axis=1)
-                    self.partial_percent = pd.concat([self.partial_percent, trial_deltaf[colname_4]],
-                                                     axis=1)
-                    self.final_percent = pd.concat(
-                        [self.final_percent, trial_deltaf[colname_1], trial_deltaf[colname_4]],
-                        axis=1)
-                    trial_num += 1
-
-        elif trial_definition in trial_definition_ind_list:
-            for index, row in self.abet_time_list.iterrows():
-                try:
-                    start_index = self.doric_pd.loc[:, 'Time'].sub(
-                        self.abet_time_list.loc[index, 'Start_Time']).abs().idxmin()
-                except IndexError:
-                    print('Trial Start Out of Bounds, Skipping Event')
-                    continue
-                try:
-                    end_index = self.doric_pd.loc[:, 'Time'].sub(
+                    trial_end_index = self.trial_definition_times.loc[:, 'End_Time'].sub(
                         self.abet_time_list.loc[index, 'End_Time']).abs().idxmin()
-                except IndexError:
-                    print('Trial End Out of Bounds, Skipping Event')
-                    continue
+                    trial_end_window = self.trial_definition_times.iloc[trial_end_index, 0]
+                    trial_iti_window = trial_end_window + trial_iti_pad
+                    iti_data = self.doric_pd.loc[(self.doric_pd['Time'] >= trial_end_window) & (
+                                self.doric_pd['Time'] <= trial_iti_window), 'DeltaF']
 
-                try:
-                    while self.doric_pd.iloc[start_index, 0] > self.abet_time_list.loc[index, 'Start_Time']:
-                        start_index -= 1
-                except IndexError:
-                    continue
-
-                try:
-                    while self.doric_pd.iloc[end_index, 0] < self.abet_time_list.loc[index, 'End_Time']:
-                        end_index += 1
-                except IndexError:
-                    continue
-
-                while len(range(start_index, (end_index + 1))) < measurements_per_interval:
-                    end_index += 1
-
-                while len(range(start_index, (end_index + 1))) > measurements_per_interval:
-                    end_index -= 1
-
-                trial_deltaf = self.doric_pd.iloc[start_index:end_index]
-                if trial_normalize == 'iti':
-                    if normalize_side in left_selection_list:
-                        trial_start_index_diff = self.trial_definition_times.loc[:, 'Start_Time'].sub(
-                            (self.abet_time_list.loc[index, 'Start_Time'] + self.extra_prior))  # .abs().idxmin()
-                        trial_start_index_diff[trial_start_index_diff > 0] = np.nan
-                        trial_start_index = trial_start_index_diff.abs().idxmin(skipna=True)
-                        trial_start_window = self.trial_definition_times.iloc[trial_start_index, 0]
-                        trial_iti_window = trial_start_window - float(trial_iti_pad)
-                        iti_data = self.doric_pd.loc[(self.doric_pd.loc[:, 'Time'] >= trial_iti_window) & (
-                                    self.doric_pd.loc[:, 'Time'] <= trial_start_window), 'DeltaF']
-                    else:
-                        trial_end_index = self.trial_definition_times.loc[:, 'End_Time'].sub(
-                            self.abet_time_list.loc[index, 'End_Time']).abs().idxmin()
-                        trial_end_window = self.trial_definition_times.iloc[trial_end_index, 0]
-                        trial_iti_window = trial_end_window + trial_iti_pad
-                        iti_data = self.doric_pd.loc[(self.doric_pd['Time'] >= trial_end_window) & (
-                                    self.doric_pd['Time'] <= trial_iti_window), 'DeltaF']
-
-                    if center_method == 'mean':
-                        z_mean = iti_data.mean()
-                        z_sd = iti_data.std()
-                    elif center_method == 'median':
-                        z_mean = iti_data.median()
-                        z_dev = np.absolute(np.subtract(iti_data, z_mean))
-                        z_sd = z_dev.median()
-                elif trial_normalize == 'prior':
-                    if normalize_side in left_selection_list:
-                        baseline_data = trial_deltaf.loc[(trial_deltaf['Time'] >= self.abet_time_list.loc[index, 'Start_Time']) & 
-                                                         (trial_deltaf['Time'] <= (self.abet_time_list.loc[index, 'Start_Time']) + self.extra_prior), 'DeltaF']
-                    else:
-                        baseline_data = trial_deltaf.loc[((trial_deltaf['Time'] >= self.abet_time_list.loc[index, 'End_Time']) - self.extra_follow) & 
-                                                         (trial_deltaf['Time'] <= self.abet_time_list.loc[index, 'End_Time']), 'DeltaF']
-
-                    if center_method == 'mean':
-                        z_mean = baseline_data.mean()
-                        z_sd = baseline_data.std()
-                    elif center_method == 'median':
-                        z_mean = baseline_data.median()
-                        z_dev = np.absolute(np.subtract(baseline_data, z_mean))
-                        z_sd = z_dev.median()
-                elif trial_normalize == 'whole':
-                    deltaf_split = trial_deltaf.loc[:, 'DeltaF']
-                    if center_method == 'mean':
-                        z_mean = deltaf_split.mean()
-                        z_sd = deltaf_split.std()
-                    elif center_method == 'median':
-                        z_mean = deltaf_split.median()
-                        z_dev = np.absolute(np.subtract(deltaf_split, z_mean))
-                        z_sd = z_dev.median()
-
-                trial_deltaf.loc[:, 'zscore'] = trial_deltaf.loc[:, 'DeltaF'].map(lambda x: ((x - z_mean) / z_sd))
-                trial_deltaf.loc[:, 'percent_change'] = trial_deltaf.loc[:, 'DeltaF'].map(
-                    lambda x: ((x - z_mean) / abs(z_mean)) * 100)
-
-                colname_1 = 'Time Trial ' + str(trial_num)
-                colname_2 = 'Z-Score Trial ' + str(trial_num)
-                colname_3 = 'Delta-F Trial ' + str(trial_num)
-                colname_4 = 'Percent-Change Trial ' + str(trial_num)
-
-                if trial_num == 1:
-                    self.final_dataframe = trial_deltaf.loc[:, ('Time', 'zscore')]
-                    self.final_dataframe = self.final_dataframe.reset_index(drop=True)
-                    self.final_dataframe = self.final_dataframe.rename(
-                        columns={'Time': colname_1, 'zscore': colname_2})
-
-                    self.partial_dataframe = trial_deltaf.loc[:, 'zscore']
-                    self.partial_dataframe = self.partial_dataframe.to_frame()
-                    self.partial_dataframe = self.partial_dataframe.reset_index(drop=True)
-                    self.partial_dataframe = self.partial_dataframe.rename(columns={'zscore': colname_2})
-
-                    self.partial_deltaf = trial_deltaf.loc[:, 'DeltaF']
-                    self.partial_deltaf = self.partial_deltaf.to_frame()
-                    self.partial_deltaf = self.partial_deltaf.reset_index(drop=True)
-                    self.partial_deltaf = self.partial_deltaf.rename(columns={'DeltaF': colname_3})
-
-                    self.final_deltaf = trial_deltaf.loc[:, ('Time', 'DeltaF')]
-                    self.final_deltaf = self.final_deltaf.reset_index(drop=True)
-                    self.final_deltaf = self.final_deltaf.rename(columns={'Time': colname_1, 'DeltaF': colname_3})
-
-                    self.partial_percent = trial_deltaf.loc[:, 'percent_change']
-                    self.partial_percent = self.partial_percent.to_frame()
-                    self.partial_percent = self.partial_percent.reset_index(drop=True)
-                    self.partial_percent = self.partial_percent.rename(columns={'percent_change': colname_4})
-
-                    self.final_percent = trial_deltaf.loc[:, ('Time', 'percent_change')]
-                    self.final_percent = self.final_percent.reset_index(drop=True)
-                    self.final_percent = self.final_percent.rename(
-                        columns={'Time': colname_1, 'percent_change': colname_4})
-
-                    trial_num += 1
+                if center_method == 'mean':
+                    z_mean = iti_data.mean()
+                    z_sd = iti_data.std()
+                elif center_method == 'median':
+                    z_mean = iti_data.median()
+                    z_dev = np.absolute(np.subtract(iti_data, z_mean))
+                    z_sd = z_dev.median()
+            elif trial_normalize == 'prior':
+                if normalize_side in left_selection_list:
+                    baseline_data = trial_deltaf.loc[(trial_deltaf['Time'] >= self.abet_time_list.loc[index, 'Start_Time']) & 
+                                                        (trial_deltaf['Time'] <= (self.abet_time_list.loc[index, 'Start_Time']) + self.extra_prior), 'DeltaF']
                 else:
-                    trial_deltaf = trial_deltaf.reset_index(drop=True)
-                    dataframe_len = len(self.final_dataframe.index)
-                    trial_len = len(trial_deltaf.index)
-                    if trial_len > dataframe_len:
-                        len_diff = trial_len - dataframe_len
-                        new_index = list(range(dataframe_len, (dataframe_len + len_diff)))
-                        self.final_dataframe = self.final_dataframe.reindex(
-                            self.final_dataframe.index.union(new_index))
-                        self.partial_dataframe = self.partial_dataframe.reindex(
-                            self.partial_dataframe.index.union(new_index))
-                        self.partial_deltaf = self.partial_deltaf.reindex(
-                            self.partial_deltaf.index.union(new_index))
-                        self.final_deltaf = self.final_deltaf.reindex(
-                            self.final_deltaf.index.union(new_index))
-                        self.partial_percent = self.partial_percent.reindex(
-                            self.partial_percent.index.union(new_index))
-                        self.final_percent = self.final_percent.reindex(
-                            self.final_percent.index.union(new_index))
+                    baseline_data = trial_deltaf.loc[((trial_deltaf['Time'] >= self.abet_time_list.loc[index, 'End_Time']) - self.extra_follow) & 
+                                                        (trial_deltaf['Time'] <= self.abet_time_list.loc[index, 'End_Time']), 'DeltaF']
 
-                    trial_deltaf = trial_deltaf.rename(columns={'Time': colname_1, 'zscore': colname_2,
-                                                                'DeltaF': colname_3, 'percent_change': colname_4})
+                if center_method == 'mean':
+                    z_mean = baseline_data.mean()
+                    z_sd = baseline_data.std()
+                elif center_method == 'median':
+                    z_mean = baseline_data.median()
+                    z_dev = np.absolute(np.subtract(baseline_data, z_mean))
+                    z_sd = z_dev.median()
+            elif trial_normalize == 'whole':
+                deltaf_split = trial_deltaf.loc[:, 'DeltaF']
+                if center_method == 'mean':
+                    z_mean = deltaf_split.mean()
+                    z_sd = deltaf_split.std()
+                elif center_method == 'median':
+                    z_mean = deltaf_split.median()
+                    z_dev = np.absolute(np.subtract(deltaf_split, z_mean))
+                    z_sd = z_dev.median()
 
-                    self.partial_dataframe = pd.concat([self.partial_dataframe, trial_deltaf[colname_2]],
-                                                       axis=1)
-                    self.partial_deltaf = pd.concat([self.partial_deltaf, trial_deltaf[colname_3]],
+            trial_deltaf.loc[:, 'zscore'] = trial_deltaf.loc[:, 'DeltaF'].map(lambda x: ((x - z_mean) / z_sd))
+
+            colname_1 = 'Time Trial ' + str(trial_num)
+            colname_2 = 'Z-Score Trial ' + str(trial_num)
+            colname_3 = 'Delta-F Trial ' + str(trial_num)
+
+            if trial_num == 1:
+                self.final_dataframe = trial_deltaf.loc[:, ('Time', 'zscore')]
+                self.final_dataframe = self.final_dataframe.reset_index(drop=True)
+                self.final_dataframe = self.final_dataframe.rename(
+                    columns={'Time': colname_1, 'zscore': colname_2})
+
+                self.partial_dataframe = trial_deltaf.loc[:, 'zscore']
+                self.partial_dataframe = self.partial_dataframe.to_frame()
+                self.partial_dataframe = self.partial_dataframe.reset_index(drop=True)
+                self.partial_dataframe = self.partial_dataframe.rename(columns={'zscore': colname_2})
+
+                self.partial_deltaf = trial_deltaf.loc[:, 'DeltaF']
+                self.partial_deltaf = self.partial_deltaf.to_frame()
+                self.partial_deltaf = self.partial_deltaf.reset_index(drop=True)
+                self.partial_deltaf = self.partial_deltaf.rename(columns={'DeltaF': colname_3})
+
+                self.final_deltaf = trial_deltaf.loc[:, ('Time', 'DeltaF')]
+                self.final_deltaf = self.final_deltaf.reset_index(drop=True)
+                self.final_deltaf = self.final_deltaf.rename(columns={'Time': colname_1, 'DeltaF': colname_3})
+
+                trial_num += 1
+            else:
+                trial_deltaf = trial_deltaf.reset_index(drop=True)
+                dataframe_len = len(self.final_dataframe.index)
+                trial_len = len(trial_deltaf.index)
+                if trial_len > dataframe_len:
+                    len_diff = trial_len - dataframe_len
+                    new_index = list(range(dataframe_len, (dataframe_len + len_diff)))
+                    self.final_dataframe = self.final_dataframe.reindex(
+                        self.final_dataframe.index.union(new_index))
+                    self.partial_dataframe = self.partial_dataframe.reindex(
+                        self.partial_dataframe.index.union(new_index))
+                    self.partial_deltaf = self.partial_deltaf.reindex(
+                        self.partial_deltaf.index.union(new_index))
+                    self.final_deltaf = self.final_deltaf.reindex(
+                        self.final_deltaf.index.union(new_index))
+
+                trial_deltaf = trial_deltaf.rename(columns={'Time': colname_1, 'zscore': colname_2,
+                                                            'DeltaF': colname_3})
+
+                self.partial_dataframe = pd.concat([self.partial_dataframe, trial_deltaf[colname_2]],
                                                     axis=1)
-                    self.final_dataframe = pd.concat(
-                        [self.final_dataframe, trial_deltaf[colname_1], trial_deltaf[colname_2]],
-                        axis=1)
-                    self.final_deltaf = pd.concat([self.final_deltaf, trial_deltaf[colname_1], trial_deltaf[colname_3]],
-                                                  axis=1)
-                    self.partial_percent = pd.concat([self.partial_percent, trial_deltaf[colname_4]],
-                                                     axis=1)
-                    self.final_percent = pd.concat(
-                        [self.final_percent, trial_deltaf[colname_1], trial_deltaf[colname_4]],
-                        axis=1)
-                    trial_num += 1
+                self.partial_deltaf = pd.concat([self.partial_deltaf, trial_deltaf[colname_3]],
+                                                axis=1)
+                self.final_dataframe = pd.concat(
+                    [self.final_dataframe, trial_deltaf[colname_1], trial_deltaf[colname_2]],
+                    axis=1)
+                self.final_deltaf = pd.concat([self.final_deltaf, trial_deltaf[colname_1], trial_deltaf[colname_3]],
+                                                axis=1)
+                trial_num += 1
 
-        elif trial_definition in trial_definition_overall_list:
-            mod_trial_times = self.trial_definition_times
-            mod_trial_times.iloc[-1, 1] = np.nan
-            mod_trial_times.iloc[0, 0] = np.nan
-            mod_trial_times['Start_Time'] = mod_trial_times['Start_Time'].shift(-1)
-            mod_trial_times = mod_trial_times[:-1]
-            for index, row in mod_trial_times.iterrows():
-                try:
-                    end_index = self.doric_pd.loc[:, 'Time'].sub(
-                        mod_trial_times.loc[index, 'Start_Time']).abs().idxmin()
-                except IndexError:
-                    print('Trial Start Out of Bounds, Skipping Event')
-                    continue
-                try:
-                    start_index = self.doric_pd.loc[:, 'Time'].sub(
-                        mod_trial_times.loc[index, 'End_Time']).abs().idxmin()
-                except IndexError:
-                    print('Trial End Out of Bounds, Skipping Event')
-                    continue
+    def calculate_max_peak(self):
+        if not self.partial_dataframe.empty:
+            # Calculate the max peak for each event (column) and then average these peaks.
+            return self.partial_dataframe.max().mean()
+        return 0
 
-                while self.doric_pd.iloc[start_index, 0] > mod_trial_times.loc[index, 'Start_Time']:
-                    start_index -= 1
+    def calculate_auc(self, event_start, event_end):
+        if not self.partial_dataframe.empty:
+            # Calculate the area under the curve (sum) for each event (column) and then average these AUCs.
+            auc_values = []
+            time_series = np.linspace(event_start, event_end, num=len(self.partial_dataframe))
+            for col in self.partial_dataframe.columns:
+                auc_values.append(np.trapz(y=self.partial_dataframe[col], x=time_series))
+            return np.mean(auc_values)
+        return 0
 
-                while self.doric_pd.iloc[end_index, 0] < mod_trial_times.loc[index, 'End_Time']:
-                    end_index += 1
-
-                while len(range(start_index, (end_index + 1))) < measurements_per_interval:
-                    end_index += 1
-
-                while len(range(start_index, (end_index + 1))) > measurements_per_interval:
-                    end_index -= 1
-
-                iti_deltaf = self.doric_pd.iloc[start_index:end_index]
-                iti_deltaf = iti_deltaf.loc[:, 'DeltaF']
-                full_iti_deltaf = pd.DataFrame()
-                if index == 0:
-                    full_iti_deltaf = iti_deltaf
-                else:
-                    full_iti_deltaf = full_iti_deltaf.append(iti_deltaf)
-
-            if center_method == 'mean':
-                z_mean = full_iti_deltaf.mean()
-                z_sd = full_iti_deltaf.std()
-            elif center_method == 'median':
-                z_mean = full_iti_deltaf.median()
-                z_sd = full_iti_deltaf.std()
-
-            for index, row in self.abet_time_list.iterrows():
-                try:
-                    start_index = self.doric_pd.loc[:, 'Time'].sub(
-                        self.abet_time_list.loc[index, 'Start_Time']).abs().idxmin()
-                except IndexError:
-                    print('Trial Start Out of Bounds, Skipping Event')
-                    continue
-                try:
-                    end_index = self.doric_pd.loc[:, 'Time'].sub(
-                        self.abet_time_list.loc[index, 'End_Time']).abs().idxmin()
-                except IndexError:
-                    print('Trial End Out of Bounds, Skipping Event')
-                    continue
-
-                while self.doric_pd.iloc[start_index, 0] > self.abet_time_list.loc[index, 'Start_Time']:
-                    start_index -= 1
-
-                while self.doric_pd.iloc[end_index, 0] < self.abet_time_list.loc[index, 'End_Time']:
-                    end_index += 1
-
-                while len(range(start_index, (end_index + 1))) < measurements_per_interval:
-                    end_index += 1
-
-                while len(range(start_index, (end_index + 1))) > measurements_per_interval:
-                    end_index -= 1
-
-                trial_deltaf = self.doric_pd.iloc[start_index:end_index]
-                trial_deltaf.loc[:, 'zscore'] = trial_deltaf.loc[:, 'DeltaF'].map(lambda x: ((x - z_mean) / z_sd))
-                trial_deltaf.loc[:, 'percent_change'] = trial_deltaf.loc[:, 'DeltaF'].map(
-                    lambda x: ((x - z_mean) / abs(z_mean)) * 100)
-                colname_1 = 'Time Trial ' + str(trial_num)
-                colname_2 = 'Z-Score Trial ' + str(trial_num)
-                colname_3 = 'Delta-F Trial ' + str(trial_num)
-                colname_4 = 'Percent-Change Trial ' + str(trial_num)
-
-                if trial_num == 1:
-                    self.final_dataframe = trial_deltaf.loc[:, ('Time', 'zscore')]
-                    self.final_dataframe = self.final_dataframe.reset_index(drop=True)
-                    self.final_dataframe = self.final_dataframe.rename(
-                        columns={'Time': colname_1, 'zscore': colname_2})
-
-                    self.partial_dataframe = trial_deltaf.loc[:, 'zscore']
-                    self.partial_dataframe = self.partial_dataframe.to_frame()
-                    self.partial_dataframe = self.partial_dataframe.reset_index(drop=True)
-                    self.partial_dataframe = self.partial_dataframe.rename(columns={'zscore': colname_2})
-
-                    self.partial_deltaf = trial_deltaf.loc[:, 'DeltaF']
-                    self.partial_deltaf = self.partial_deltaf.to_frame()
-                    self.partial_deltaf = self.partial_deltaf.reset_index(drop=True)
-                    self.partial_deltaf = self.partial_deltaf.rename(columns={'DeltaF': colname_2})
-
-                    self.final_deltaf = trial_deltaf.loc[:, ('Time', 'DeltaF')]
-                    self.final_deltaf = self.final_deltaf.to_frame()
-                    self.final_deltaf = self.final_deltaf.reset_index(drop=True)
-                    self.final_deltaf = self.final_deltaf.rename(columns={'Time': colname_1, 'DeltaF': colname_2})
-
-                    self.partial_percent = trial_deltaf.loc[:, 'percent_change']
-                    self.partial_percent = self.partial_percent.to_frame()
-                    self.partial_percent = self.partial_percent.reset_index(drop=True)
-                    self.partial_percent = self.partial_percent.rename(columns={'percent_change': colname_2})
-
-                    self.final_percent = trial_deltaf.loc[:, ('Time', 'percent_change')]
-                    self.final_percent = self.final_percent.reset_index(drop=True)
-                    self.final_percent = self.final_percent.rename(
-                        columns={'Time': colname_1, 'percent_change': colname_2})
-
-                    trial_num += 1
-                else:
-                    trial_deltaf = trial_deltaf.reset_index(drop=True)
-                    dataframe_len = len(self.final_dataframe.index)
-                    trial_len = len(trial_deltaf.index)
-                    if trial_len > dataframe_len:
-                        len_diff = trial_len - dataframe_len
-                        new_index = list(range(dataframe_len, (dataframe_len + len_diff)))
-                        self.final_dataframe = self.final_dataframe.reindex(
-                            self.final_dataframe.index.union(new_index))
-                        self.partial_dataframe = self.partial_dataframe.reindex(
-                            self.partial_dataframe.index.union(new_index))
-                        self.partial_deltaf = self.partial_deltaf.reindex(
-                            self.partial_deltaf.index.union(new_index))
-                        self.final_deltaf = self.final_deltaf.reindex(
-                            self.final_deltaf.index.union(new_index))
-                        self.partial_percent = self.partial_percent.reindex(
-                            self.partial_percent.index.union(new_index))
-                        self.final_percent = self.final_percent.reindex(
-                            self.final_percent.index.union(new_index))
-
-                    trial_deltaf = trial_deltaf.rename(columns={'Time': colname_1, 'zscore': colname_2,
-                                                                'DeltaF': colname_3, 'percent_change': colname_4})
-
-                    self.partial_dataframe = pd.concat([self.partial_dataframe, trial_deltaf[colname_2]],
-                                                       axis=1)
-                    self.partial_deltaf = pd.concat([self.partial_deltaf, trial_deltaf[colname_3]],
-                                                    axis=1)
-                    self.final_dataframe = pd.concat(
-                        [self.final_dataframe, trial_deltaf[colname_1], trial_deltaf[colname_2]],
-                        axis=1)
-                    self.final_deltaf = pd.concat([self.final_deltaf, trial_deltaf[colname_1], trial_deltaf[colname_3]],
-                                                  axis=1)
-                    self.partial_percent = pd.concat([self.partial_percent, trial_deltaf[colname_4]],
-                                                     axis=1)
-                    self.final_percent = pd.concat(
-                        [self.final_percent, trial_deltaf[colname_1], trial_deltaf[colname_4]],
-                        axis=1)
-                    trial_num += 1
+    def get_peri_event_data(self):
+        return self.partial_dataframe
 
     def write_data(self, output_data, filename_override=''):
-        processed_list = [1, 'Full', 'full']
-        partial_list = [4, 'SimpleZ', 'simple']
-        final_list = [7, 'TimedZ', 'timed']
-        partialf_list = [2, 'SimpleF', 'simplef']
-        finalf_list = [5, 'TimedF', 'timedf']
-        partialp_list = [3, 'SimpleP', 'simplep']
-        finalp_list = [6, 'TimedP', 'timedp']
+        partial_list = [1, 'SimpleZ', 'simple']
+        final_list = [2, 'TimedZ', 'timed']
+        partialf_list = [3, 'SimpleF', 'simplef']
+        finalf_list = [4, 'TimedF', 'timedf']
+        processed_list = [5, 'Full', 'full']
+
+        output_string_list = ['SimpleZ','TimedZ','SimpleF','TimedF','Raw']
+
+        output_string = output_string_list[output_data-1]
+
 
         output_folder = self.main_folder_path + self.folder_symbol + 'Output'
         if not (os.path.isdir(output_folder)):
             os.mkdir(output_folder)
         if self.abet_loaded is True and self.anymaze_loaded is False:
-            file_path_string = output_folder + self.folder_symbol + output_data + '-' + self.animal_id + ' ' + \
+            file_path_string = output_folder + self.folder_symbol + output_string + '-' + self.animal_id + ' ' + \
                                self.date + ' ' + self.event_name + '.csv'
         else:
             current_time = datetime.now()
             current_time_string = current_time.strftime('%d-%m-%Y %H-%M-%S')
-            file_path_string = output_folder + self.folder_symbol + output_data + '-' + current_time_string + '.csv'
+            file_path_string = output_folder + self.folder_symbol + output_string + '-' + current_time_string + '.csv'
 
         if filename_override != '':
-            file_path_string = filename_override + '-' + output_data + '.csv'
+            file_path_string = filename_override + '-' + output_string + '.csv'
 
         print(file_path_string)
         if output_data in processed_list:
@@ -1052,18 +775,17 @@ class PhotometryData:
             self.partial_deltaf.to_csv(file_path_string, index=False)
         elif output_data in finalf_list:
             self.final_deltaf.to_csv(file_path_string, index=False)
-        elif output_data in partialp_list:
-            self.partial_percent.to_csv(file_path_string, index=False)
-        elif output_data in finalp_list:
-            self.final_percent.to_csv(file_path_string, index=False)
 
     def write_summary(self, output_data, summary_string, output_path, session_string):
 
-        summary_path = output_path + summary_string + 'Summary' + '-' + output_data + '-' +'.xlsx'
+        z_list = [6,'SummaryZ','summaryz']
+        f_list = [7,'SummaryF', 'summaryf']
 
-        z_list = ['SummaryZ','summaryz']
-        f_list = ['SummaryF', 'summaryf']
-        p_list = ['SummaryP', 'summaryp']
+        output_string_list = ['SummaryZ','SummaryF','SummaryP']
+
+        output_string = output_string_list[output_data-1]
+
+        summary_path = output_path + summary_string + 'Summary' + '-' + output_string + '-' +'.xlsx'
 
         if output_data in z_list:
             session_temp = self.partial_dataframe.transpose()
@@ -1147,3 +869,61 @@ def abet_extract_information(abet_file_path):
     abet_file.close()
     return animal_id, date, schedule
 
+def process_files(file_sheet_path, event_sheet_path, output_options, config):
+    file_pair_df = pd.read_csv(file_sheet_path)    
+    num_rows = len(file_pair_df)
+    num_cpus_75_percent = int(multiprocessing.cpu_count() * 0.75)
+    num_processes = min(num_cpus_75_percent, num_rows)
+
+    event_window_prior = float(config['Event_Window']['event_prior'])
+    event_window_follow = float(config['Event_Window']['event_follow'])
+
+    trial_start_stage = [item.strip() for item in config['ITI_Window']['trial_start_stage'].split(',')]
+    trial_end_stage = [item.strip() for item in config['ITI_Window']['trial_end_stage'].split(',')]
+
+    iti_prior_trial = float(config['ITI_Window']['iti_prior_trial'])
+    center_z = config['ITI_Window']['center_z']
+    center_method = config['ITI_Window']['center_method']
+
+    filter_frequency = int(config['Photometry_Processing']['filter_frequency'])
+
+    exclusion_list = [item.strip() for item in config['Filter']['exclusion_list'].split(',')]
+    
+    results = []
+    with multiprocessing.Pool(processes=num_processes) as pool:
+        for _, row in file_pair_df.iterrows():
+            photometry_data = PhotometryData()
+            photometry_data.load_abet_data(row['abet_path'])
+            photometry_data.load_doric_data(row['doric_path'], row['ctrl_col_num'], row['act_col_num'], row['ttl_col_num'], row['mode'])
+            photometry_data.abet_doric_synchronize()
+            photometry_data.doric_process(filter_frequency)
+            
+            # Extract values from config object
+            photometry_data.abet_trial_definition(trial_start_stage, trial_end_stage)
+
+            
+            event_sheet_df = pd.read_csv(event_sheet_path)
+
+            for _, event_row in event_sheet_df.iterrows():
+                photometry_data.abet_search_event(
+                    start_event_id=event_row['event_type'],
+                    start_event_item_name=event_row['event_name'],
+                    start_event_group=event_row['event_group'],
+                    extra_prior_time = event_window_prior,
+                    extra_follow_time = event_window_follow,
+                    exclusion_list = exclusion_list
+                )
+                photometry_data.trial_separator(trial_normalize=center_z, 
+                                                trial_iti_pad=iti_prior_trial,
+                                                center_method=center_method)
+
+                for output in output_options:
+                    if output <= 7:
+                        photometry_data.write_data(output)
+                    else:
+                        photometry_data.write_summary(output)
+                    
+                max_peak = photometry_data.calculate_max_peak()
+                auc = photometry_data.calculate_auc(event_window_prior, event_window_follow)
+                results.append([row['abet_path'], event_row['event_name'], max_peak, auc])
+    return results
