@@ -1,52 +1,52 @@
 import sys
 import pandas as pd
-import os # Added for path manipulation
+import os
 import configparser
 from PySide6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout,
                                QPushButton, QLabel, QFileDialog, QLineEdit, QTableWidget,
-                               QTableWidgetItem, QFormLayout, QLineEdit, QMessageBox,
+                               QTableWidgetItem, QFormLayout, QMessageBox,
                                QGroupBox, QCheckBox, QHBoxLayout, QMenuBar, QComboBox,
                                QListWidget, QListWidgetItem, QSpinBox)
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
+from functools import partial
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+import numpy as np
+from Processing import data_processor
+import multiprocessing
 
+class MatplotlibCanvas(FigureCanvas):
+    def __init__(self, parent=None, width=5, height=4, dpi=100):
+        fig = Figure(figsize=(width, height), dpi=dpi)
+        self.axes = fig.add_subplot(111)
+        super(MatplotlibCanvas, self).__init__(fig)
 
 class MultiSelectComboBox(QWidget):
     def __init__(self):
         super().__init__()
-
-        # Layout to hold main elements
         layout = QVBoxLayout(self)
-
-        # Line edit for direct entry
         self.line_edit = QLineEdit()
         self.line_edit.setPlaceholderText("Select or add new entries...")
-        self.line_edit.returnPressed.connect(self.add_custom_entry)  # Custom entries
-
-        # ListWidget for displaying items with checkboxes
+        self.line_edit.returnPressed.connect(self.add_custom_entry)
         self.list_widget = QListWidget()
-
-        # Add widgets to layout
         layout.addWidget(self.line_edit)
         layout.addWidget(self.list_widget)
 
     def add_option(self, option_text):
-        """Adds an option to the list widget with a checkbox."""
         if option_text not in [self.list_widget.item(i).text() for i in range(self.list_widget.count())]:
             item = QListWidgetItem(option_text)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)  # Add checkbox
-            item.setCheckState(Qt.Unchecked)  # Default to unchecked
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked)
             self.list_widget.addItem(item)
 
     def add_custom_entry(self):
-        """Adds a custom entry from the line edit to the list widget."""
         custom_text = self.line_edit.text().strip()
         if custom_text:
             self.add_option(custom_text)
-            self.line_edit.clear()  # Clear text after entry
+            self.line_edit.clear()
 
     def get_checked_items(self):
-        """Returns a list of all checked items."""
         return [self.list_widget.item(i).text() for i in range(self.list_widget.count())
                 if self.list_widget.item(i).checkState() == Qt.Checked]
 
@@ -54,42 +54,25 @@ class FiberPhotometryApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Fiber Photometry Data Analyzer")
-        self.resize(1200, 800)  # Set a larger default window size
-
-        # Initialize configuration
-        # Determine the absolute path to the script's directory
+        self.resize(1200, 800)
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        # Construct the path to Config.ini, assuming it's one level up from script_dir
         self.config_file_path = os.path.normpath(os.path.join(script_dir, '..', 'Config.ini'))
-        
         self.config = configparser.ConfigParser()
         try:
             if not self.config.read(self.config_file_path):
-                QMessageBox.warning(self, "Config File Warning", 
-                                    f"Config file '{self.config_file_path}' not found or empty. "
-                                    "Defaults may not be loaded correctly.")
+                QMessageBox.warning(self, "Config File Warning", f"Config file '{self.config_file_path}' not found or empty. Defaults may not be loaded correctly.")
         except configparser.Error as e:
-            QMessageBox.critical(self, "Config File Error", 
-                                 f"Error reading config file '{self.config_file_path}': {e}")
-            # Application might not function correctly, consider exiting or using hardcoded defaults
+            QMessageBox.critical(self, "Config File Error", f"Error reading config file '{self.config_file_path}': {e}")
 
-
-        # Initialize template data
         self.template_loaded = False
-        self.unique_event_types = []
-        self.unique_event_names = []
-        self.unique_event_groups = []
-        self.trial_stage_options = []
-
-        # Main layout with tabs
         self.tabs = QTabWidget()
-
         self.home_tab = QWidget()
         self.event_sheet_tab = QWidget()
         self.file_pair_tab = QWidget()
         self.options_tab = QWidget()
         self.analysis_tab = QWidget()
         self.results_tab = QWidget()
+        self.visualization_tab = QWidget()
 
         self.tabs.addTab(self.home_tab, "Home")
         self.tabs.addTab(self.event_sheet_tab, "Event Sheet")
@@ -97,63 +80,50 @@ class FiberPhotometryApp(QMainWindow):
         self.tabs.addTab(self.options_tab, "Options")
         self.tabs.addTab(self.analysis_tab, "Analysis")
         self.tabs.addTab(self.results_tab, "Results")
+        self.tabs.addTab(self.visualization_tab, "Visualization")
 
         self.setCentralWidget(self.tabs)
-
-        # Initialize tab layouts
         self.init_home_tab()
         self.init_event_sheet_tab()
         self.init_file_pair_tab()
         self.init_analysis_tab()
         self.init_results_tab()
         self.init_options_tab()
-
-        # Initialize menu bar
+        self.init_visualization_tab()
         self.init_menu_bar()
 
     def init_menu_bar(self):
         menu_bar = QMenuBar(self)
         self.setMenuBar(menu_bar)
-
-        # File menu
         file_menu = menu_bar.addMenu("File")
-
-        # Import template behavior file action
         import_template_action = QAction("Import Template Behaviour File", self)
         import_template_action.triggered.connect(self.import_template_behaviour_file)
         file_menu.addAction(import_template_action)
-
         load_config_action = QAction("Load Configuration...", self)
         load_config_action.triggered.connect(self.load_configuration_file)
         file_menu.addAction(load_config_action)
-
         save_config_as_action = QAction("Save Configuration As...", self)
         save_config_as_action.triggered.connect(self.save_configuration_as)
         file_menu.addAction(save_config_as_action)
 
     def import_template_behaviour_file(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Import Template Behaviour File", "", "CSV Files (*.csv)")
-        column_index = 0
         if file_path:
             try:
                 data = pd.read_csv(file_path, sep=',', header=None, names=range(17))
+                column_index = 0
                 for index, row in data.iterrows():
                     if row[0] == 'Evnt_Time':
                         column_index = index
                 self.event_data = data.iloc[column_index:]
                 self.event_data.columns = self.event_data.iloc[0]
                 self.event_data = self.event_data.drop(column_index)
-
-                # Extract unique values for dropdowns
                 self.unique_event_types = self.event_data['Evnt_Name'].dropna().unique().tolist()
                 self.unique_event_names = self.event_data['Item_Name'].dropna().unique().tolist()
                 self.unique_event_groups = self.event_data['Group_ID'].dropna().unique().tolist()
                 self.trial_stage_options = self.event_data.loc[self.event_data['Evnt_Name'] == "Condition Event", 'Item_Name'].dropna().unique().tolist()
                 self.template_loaded = True
-
-                # Update the trial start stage entry in options tab if template is loaded
                 self.update_options_with_template()
-
                 QMessageBox.information(self, "Imported", f"Template behaviour file imported from: {file_path}")
             except Exception as e:
                 QMessageBox.warning(self, "Error", f"Failed to load template: {str(e)}")
@@ -165,26 +135,16 @@ class FiberPhotometryApp(QMainWindow):
 
     def init_event_sheet_tab(self):
         layout = QVBoxLayout()
-
-        # File selection and table for Event Sheet
         self.event_file_btn = QPushButton("Select Event Sheet")
         self.event_file_btn.clicked.connect(self.load_event_sheet)
         self.event_file_path = QLineEdit()
         layout.addWidget(QLabel("Event Sheet File:"))
         layout.addWidget(self.event_file_btn)
         layout.addWidget(self.event_file_path)
-
-        # Table to display the Event Sheet content
         self.event_table = QTableWidget()
-
-        # Set column count and headers
         self.event_table.setColumnCount(5)
-        self.event_table.setHorizontalHeaderLabels([
-            'event_type', 'event_name', 'event_group', 'event_arg', 'num_filter'])
-
+        self.event_table.setHorizontalHeaderLabels(['event_type', 'event_name', 'event_group', 'event_arg', 'num_filter'])
         layout.addWidget(self.event_table)
-
-        # Buttons to add/remove rows and save
         button_layout = QHBoxLayout()
         add_row_btn = QPushButton("Add Row")
         add_row_btn.clicked.connect(lambda: self.add_row(self.event_table))
@@ -196,29 +156,20 @@ class FiberPhotometryApp(QMainWindow):
         button_layout.addWidget(remove_row_btn)
         button_layout.addWidget(save_btn)
         layout.addLayout(button_layout)
-
         self.event_sheet_tab.setLayout(layout)
 
     def init_file_pair_tab(self):
         layout = QVBoxLayout()
-
-        # File selection and table for File Pair
         self.file_pair_btn = QPushButton("Select File Pair Sheet")
         self.file_pair_btn.clicked.connect(self.load_file_pair_sheet)
         self.file_pair_path = QLineEdit()
         layout.addWidget(QLabel("File Pair Sheet File:"))
         layout.addWidget(self.file_pair_btn)
         layout.addWidget(self.file_pair_path)
-
-        # Table to display the File Pair content
         self.file_pair_table = QTableWidget()
         self.file_pair_table.setColumnCount(6)
-        self.file_pair_table.setHorizontalHeaderLabels([
-            'abet_path', 'doric_path', 'ctrl_col_num', 'act_col_num', 'ttl_col_num', 'mode'
-        ])
+        self.file_pair_table.setHorizontalHeaderLabels(['abet_path', 'doric_path', 'ctrl_col_num', 'act_col_num', 'ttl_col_num', 'mode'])
         layout.addWidget(self.file_pair_table)
-
-        # Buttons to add/remove rows and save
         button_layout = QHBoxLayout()
         add_row_btn = QPushButton("Add Row")
         add_row_btn.clicked.connect(lambda: self.add_row(self.file_pair_table))
@@ -230,7 +181,6 @@ class FiberPhotometryApp(QMainWindow):
         button_layout.addWidget(remove_row_btn)
         button_layout.addWidget(save_btn)
         layout.addLayout(button_layout)
-
         self.file_pair_tab.setLayout(layout)
 
     def load_event_sheet(self):
@@ -251,7 +201,6 @@ class FiberPhotometryApp(QMainWindow):
         table_widget.setRowCount(rows)
         table_widget.setColumnCount(cols)
         table_widget.setHorizontalHeaderLabels(data.columns)
-
         for row in range(rows):
             for col in range(cols):
                 header = data.columns[col].lower()
@@ -259,13 +208,11 @@ class FiberPhotometryApp(QMainWindow):
                     event_type_combo = QComboBox()
                     event_type_combo.addItems(self.unique_event_types)
                     event_type_combo.setCurrentText(str(data.iat[row, col]))
-                    event_type_combo.currentTextChanged.connect(
-                        lambda text, r=row: self.filter_event_data(r, text, table_widget))
+                    event_type_combo.currentTextChanged.connect(lambda text, r=row: self.filter_event_data(r, text, table_widget))
                     table_widget.setCellWidget(row, col, event_type_combo)
                 elif header == 'event_name' and self.template_loaded:
                     event_name_combo = QComboBox()
-                    event_name_combo.currentTextChanged.connect(
-                        lambda text, r=row: self.filter_event_group(r, text, table_widget))
+                    event_name_combo.currentTextChanged.connect(lambda text, r=row: self.filter_event_group(r, text, table_widget))
                     table_widget.setCellWidget(row, col, event_name_combo)
                 elif header == 'event_group' and self.template_loaded:
                     event_group_combo = QComboBox()
@@ -273,55 +220,43 @@ class FiberPhotometryApp(QMainWindow):
                 elif header == 'num_filter':
                     num_filter_spinbox = QSpinBox()
                     num_filter_spinbox.setValue(int(data.iat[row, col]) if pd.notna(data.iat[row, col]) else 0)
-                    num_filter_spinbox.valueChanged.connect(
-                        lambda value, r=row: self.adjust_filter_columns(r, value, table_widget))
+                    num_filter_spinbox.valueChanged.connect(lambda value, r=row: self.adjust_filter_columns(r, value, table_widget))
                     table_widget.setCellWidget(row, col, num_filter_spinbox)
                 else:
                     item = QTableWidgetItem(str(data.iat[row, col]))
                     item.setFlags(item.flags() | Qt.ItemIsEditable)
                     table_widget.setItem(row, col, item)
-
         table_widget.resizeColumnsToContents()
 
     def filter_event_data(self, row, event_type, table_widget):
         filtered_names = self.event_data[self.event_data['Evnt_Name'] == event_type]['Item_Name'].dropna().unique()
-        name_combo = table_widget.cellWidget(row, table_widget.columnCount() - 22)  # Column index for event_name
+        name_combo = table_widget.cellWidget(row, 1)
         name_combo.clear()
         name_combo.addItems(filtered_names)
-
-        # Trigger the event group filter for the first available event name
         if filtered_names.size > 0:
             self.filter_event_group(row, filtered_names[0], table_widget)
 
     def filter_event_group(self, row, event_name, table_widget):
-        event_type_combo = table_widget.cellWidget(row, table_widget.columnCount() - 23)  # Column index for event_type
+        event_type_combo = table_widget.cellWidget(row, 0)
         event_type = event_type_combo.currentText()
-
-        filtered_groups = self.event_data[
-            (self.event_data['Evnt_Name'] == event_type) &
-            (self.event_data['Item_Name'] == event_name)
-            ]['Group_ID'].dropna().unique()
-
-        group_combo = table_widget.cellWidget(row, table_widget.columnCount() - 21)  # Column index for event_group
+        filtered_groups = self.event_data[(self.event_data['Evnt_Name'] == event_type) & (self.event_data['Item_Name'] == event_name)]['Group_ID'].dropna().unique()
+        group_combo = table_widget.cellWidget(row, 2)
         group_combo.clear()
         group_combo.addItems(filtered_groups)
 
     def add_row(self, table_widget):
         current_row_count = table_widget.rowCount()
         table_widget.insertRow(current_row_count)
-
         for col in range(table_widget.columnCount()):
             header = table_widget.horizontalHeaderItem(col).text().lower()
             if header == 'event_type' and self.template_loaded:
                 event_type_combo = QComboBox()
                 event_type_combo.addItems(self.unique_event_types)
-                event_type_combo.currentTextChanged.connect(
-                    lambda text, r=current_row_count: self.filter_event_data(r, text, table_widget))
+                event_type_combo.currentTextChanged.connect(lambda text, r=current_row_count: self.filter_event_data(r, text, table_widget))
                 table_widget.setCellWidget(current_row_count, col, event_type_combo)
             elif header == 'event_name' and self.template_loaded:
                 event_name_combo = QComboBox()
-                event_name_combo.currentTextChanged.connect(
-                    lambda text, r=current_row_count: self.filter_event_group(r, text, table_widget))
+                event_name_combo.currentTextChanged.connect(lambda text, r=current_row_count: self.filter_event_group(r, text, table_widget))
                 table_widget.setCellWidget(current_row_count, col, event_name_combo)
             elif header == 'event_group' and self.template_loaded:
                 event_group_combo = QComboBox()
@@ -329,8 +264,7 @@ class FiberPhotometryApp(QMainWindow):
             elif header == 'num_filter':
                 num_filter_spinbox = QSpinBox()
                 num_filter_spinbox.setValue(0)
-                num_filter_spinbox.valueChanged.connect(
-                    lambda value, r=current_row_count: self.adjust_filter_columns(r, value, table_widget))
+                num_filter_spinbox.valueChanged.connect(lambda value, r=current_row_count: self.adjust_filter_columns(r, value, table_widget))
                 table_widget.setCellWidget(current_row_count, col, num_filter_spinbox)
             else:
                 item = QTableWidgetItem("")
@@ -338,25 +272,15 @@ class FiberPhotometryApp(QMainWindow):
                 table_widget.setItem(current_row_count, col, item)
 
     def adjust_filter_columns(self, row, num_filters, table_widget):
-        """Adjust columns in the table based on the num_filter value."""
-        # Clear any existing filter columns beyond the current num_filter count
         total_columns = 5 + (num_filters * 6)
         table_widget.setColumnCount(total_columns)
-
-        # Set headers for the filter columns
         for i in range(1, num_filters + 1):
             base_index = 5 + (i - 1) * 6
-            if i == 1:
-                headers = ['filter_type', 'filter_name', 'filter_group', 'filter_arg', 'filter_eval', 'filter_prior']
-            else:
-                headers = [f'filter_type{i}', f'filter_name{i}', f'filter_group{i}', f'filter_arg{i}',
-                           f'filter_eval{i}', f'filter_prior{i}']
+            headers = [f'filter_type{i}', f'filter_name{i}', f'filter_group{i}', f'filter_arg{i}', f'filter_eval{i}', f'filter_prior{i}']
             for j, header in enumerate(headers):
                 table_widget.setHorizontalHeaderItem(base_index + j, QTableWidgetItem(header))
                 item = QTableWidgetItem("")
-                table_widget.setItem(row, base_index + j, item)  # Initialize with empty items
-
-        # Adjust the table size
+                table_widget.setItem(row, base_index + j, item)
         table_widget.resizeColumnsToContents()
 
     def remove_row(self, table_widget):
@@ -367,7 +291,6 @@ class FiberPhotometryApp(QMainWindow):
     def save_table_to_csv(self, table_widget):
         file_path, _ = QFileDialog.getSaveFileName(self, "Save Table to CSV", "", "CSV Files (*.csv)")
         if file_path:
-            # Extract data from the table
             rows = table_widget.rowCount()
             cols = table_widget.columnCount()
             data = []
@@ -381,122 +304,231 @@ class FiberPhotometryApp(QMainWindow):
                         item = table_widget.item(row, col)
                         row_data.append(item.text() if item else "")
                 data.append(row_data)
-
-            # Save data to CSV using pandas
             df = pd.DataFrame(data, columns=headers)
             df.to_csv(file_path, index=False)
             QMessageBox.information(self, "Saved", "Table saved successfully to CSV.")
 
     def init_analysis_tab(self):
         layout = QVBoxLayout()
-        layout.addWidget(QLabel("Configure Analysis Options and Run")) # Updated label for clarity
-
-        # Add Output section UI elements here
+        layout.addWidget(QLabel("Configure Analysis Options and Run"))
         if "Output" in self.config:
             output_group_box = QGroupBox("Output")
             output_group_layout = QFormLayout()
-            section_name = "Output"  # Explicitly use "Output" for clarity
-
+            section_name = "Output"
             for key in self.config[section_name]:
                 value = self.config[section_name][key]
                 display_key = key.replace("_", " ")
-                widget_attr_name = f"{section_name}_{key}_checkbox" # e.g., self.Output_save_raw_data_checkbox
-
-                # Output section in Config.ini is expected to have boolean-like values for checkboxes
+                widget_attr_name = f"{section_name}_{key}_checkbox"
                 checkbox = QCheckBox()
                 checkbox.setChecked(value.lower() == 'true' or value == '1')
                 output_group_layout.addRow(display_key, checkbox)
                 setattr(self, widget_attr_name, checkbox)
-
             output_group_box.setLayout(output_group_layout)
             layout.addWidget(output_group_box)
-
-        # Add a spacer to push the button to the bottom, or just add it directly
-        layout.addStretch(1) # Optional: adds space above the button
-
-        # Run Analysis Button
+        layout.addStretch(1)
         self.run_analysis_button = QPushButton("Run Analysis")
         self.run_analysis_button.clicked.connect(self.run_analysis_action)
         layout.addWidget(self.run_analysis_button)
-
         self.analysis_tab.setLayout(layout)
 
     def run_analysis_action(self):
-        # Placeholder for when the "Run Analysis" button is clicked
-        QMessageBox.information(self, "Analysis", "Run Analysis button clicked! Implement analysis logic here.")
-        print("Run Analysis button clicked!")
-        # TODO: Implement the actual analysis logic here
-        # This might involve:
-        # 1. Reading data from the event sheet and file pair tabs.
-        # 2. Using the configuration from self.config (including the Output options).
-        # 3. Performing calculations using your PhotometryData class or similar.
-        # 4. Displaying results in the Results tab or saving files.
+        event_sheet_path = self.event_file_path.text()        
+        print(event_sheet_path)
+        file_pair_path = self.file_pair_path.text()
+
+        if not os.path.exists(event_sheet_path) or not os.path.exists(file_pair_path):
+            QMessageBox.warning(self, "Error", "Please select valid event and file pair sheets.")
+            return
+
+        section_name = "Output"
+        output_selections = []
+        for i, key in enumerate(self.config[section_name]):
+            widget_attr_name = f"{section_name}_{key}_checkbox"
+            if hasattr(self, widget_attr_name):
+                checkbox = getattr(self, widget_attr_name)
+                if checkbox.isChecked():
+                    output_selections.append(i+1)
+
+        results_data = data_processor.process_files(file_pair_path, event_sheet_path, output_selections, self.config)
+
+        # Display the results
+        self.display_results(results_data)
+        QMessageBox.information(self, "Analysis", "Analysis complete!")
+
+    def display_results(self, results_data):
+        self.results_table.setRowCount(len(results_data))
+        self.results_table.setColumnCount(4)
+        self.results_table.setHorizontalHeaderLabels(['File', 'Behavior', 'Max Peak', 'AUC'])
+        for i, row_data in enumerate(results_data):
+            for j, cell_data in enumerate(row_data):
+                self.results_table.setItem(i, j, QTableWidgetItem(str(cell_data)))
+        self.results_table.resizeColumnsToContents()
 
     def init_results_tab(self):
         layout = QVBoxLayout()
         layout.addWidget(QLabel("Analysis Results"))
+        self.results_table = QTableWidget()
+        layout.addWidget(self.results_table)
+        save_button = QPushButton("Save Results")
+        save_button.clicked.connect(self.save_results)
+        layout.addWidget(save_button)
         self.results_tab.setLayout(layout)
+
+    def save_results(self):
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Results", "", "CSV Files (*.csv)")
+        if file_path:
+            rows = self.results_table.rowCount()
+            cols = self.results_table.columnCount()
+            data = []
+            headers = [self.results_table.horizontalHeaderItem(col).text() for col in range(cols)]
+            for row in range(rows):
+                row_data = [self.results_table.item(row, col).text() for col in range(cols)]
+                data.append(row_data)
+            df = pd.DataFrame(data, columns=headers)
+            df.to_csv(file_path, index=False)
+            QMessageBox.information(self, "Saved", "Results saved successfully.")
+
+    def init_visualization_tab(self):
+        layout = QVBoxLayout()
+        
+        controls_layout = QFormLayout()
+        self.vis_file_select = QComboBox()
+        self.update_vis_file_select()
+        self.vis_behavior_select = QComboBox()
+        self.vis_file_select.currentTextChanged.connect(self.update_vis_behavior_select)
+        
+        self.event_prior_input = QLineEdit("2.0")
+        self.event_follow_input = QLineEdit("5.0")
+        
+        controls_layout.addRow("Select File:", self.vis_file_select)
+        controls_layout.addRow("Select Behavior:", self.vis_behavior_select)
+        controls_layout.addRow("Event Prior (s):", self.event_prior_input)
+        controls_layout.addRow("Event Follow (s):", self.event_follow_input)
+        
+        generate_plot_button = QPushButton("Generate Plot")
+        generate_plot_button.clicked.connect(self.generate_plot)
+        
+        layout.addLayout(controls_layout)
+        layout.addWidget(generate_plot_button)
+        
+        self.canvas = MatplotlibCanvas(self, width=5, height=4, dpi=100)
+        layout.addWidget(self.canvas)
+        
+        save_layout = QHBoxLayout()
+        save_data_button = QPushButton("Save Data")
+        save_data_button.clicked.connect(self.save_plot_data)
+        save_graph_button = QPushButton("Save Graph")
+        save_graph_button.clicked.connect(self.save_plot_graph)
+        save_layout.addWidget(save_data_button)
+        save_layout.addWidget(save_graph_button)
+        
+        layout.addLayout(save_layout)
+        self.visualization_tab.setLayout(layout)
+
+    def update_vis_file_select(self):
+        self.vis_file_select.clear()
+        if os.path.exists(self.file_pair_path.text()):
+            df = pd.read_csv(self.file_pair_path.text())
+            self.vis_file_select.addItems(df['abet_path'].tolist())
+
+    def update_vis_behavior_select(self):
+        self.vis_behavior_select.clear()
+        if os.path.exists(self.event_sheet_path.text()):
+            df = pd.read_csv(self.event_sheet_path.text())
+            self.vis_behavior_select.addItems(df['event_name'].tolist())
+
+    def generate_plot(self):
+        file_path = self.vis_file_select.currentText()
+        behavior = self.vis_behavior_select.currentText()
+        event_prior = float(self.event_prior_input.text())
+        event_follow = float(self.event_follow_input.text())
+
+        file_pair_df = pd.read_csv(self.file_pair_path.text())
+        row = file_pair_df[file_pair_df['abet_path'] == file_path].iloc[0]
+
+        photometry_data = data_processor.PhotometryData()
+        photometry_data.load_abet_data(row['abet_path'])
+        photometry_data.load_doric_data(row['doric_path'], row['ctrl_col_num'], row['act_col_num'], row['ttl_col_num'], row['mode'])
+        photometry_data.abet_doric_synchronize()
+        photometry_data.doric_process()
+
+        event_sheet_df = pd.read_csv(self.event_sheet_path.text())
+        event_row = event_sheet_df[event_sheet_df['event_name'] == behavior].iloc[0]
+
+        photometry_data.abet_search_event(
+            start_event_id=event_row['event_type'],
+            start_event_item_name=event_row['event_name'],
+            start_event_group=event_row['event_group'],
+            extra_prior_time=event_prior,
+            extra_follow_time=event_follow
+        )
+        photometry_data.trial_separator()
+
+        self.plot_data = photometry_data.get_peri_event_data()
+        
+        self.canvas.axes.clear()
+        time_axis = np.linspace(-event_prior, event_follow, len(self.plot_data.mean(axis=1)))
+        self.canvas.axes.plot(time_axis, self.plot_data.mean(axis=1))
+        self.canvas.axes.axvline(x=0, color='r', linestyle='--')
+        self.canvas.axes.set_xlabel("Time (s)")
+        self.canvas.axes.set_ylabel("Signal")
+        self.canvas.axes.set_title(f"Perievent Histogram for {behavior}")
+        self.canvas.draw()
+
+    def save_plot_data(self):
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Plot Data", "", "CSV Files (*.csv)")
+        if file_path:
+            self.plot_data.to_csv(file_path)
+            QMessageBox.information(self, "Saved", "Plot data saved successfully.")
+
+    def save_plot_graph(self):
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Graph", "", "PNG Files (*.png);;JPEG Files (*.jpg)")
+        if file_path:
+            self.canvas.figure.savefig(file_path)
+            QMessageBox.information(self, "Saved", "Graph saved successfully.")
 
     def init_options_tab(self):
         main_layout = QVBoxLayout()
-
-        # Define which keys should use MultiSelectComboBox
-        multibox_options = ['trial_start_stage','trial_end_stage','exclusion_list']
-
-        # Create a group for each section and add its fields
+        multibox_options = ['trial_start_stage', 'trial_end_stage', 'exclusion_list']
         for section in self.config.sections():
-            if section == "Output":  # Skip the Output section as it's now in the Analysis tab
+            if section == "Output":
                 continue
-
-            group_box = QGroupBox(section.replace("_", " "))  # Section title
+            group_box = QGroupBox(section.replace("_", " "))
             group_layout = QFormLayout()
-
-            # Create fields for each parameter within the section
-            for key in self.config[section]:  # Iterate over keys
+            for key in self.config[section]:
                 value = self.config[section][key]
-                display_key = key.replace("_", " ")  # Replace underscores with spaces
+                display_key = key.replace("_", " ")
                 widget_attr_base = f"{section}_{key}"
-
-                if key in multibox_options: # This check remains for other sections
+                if key in multibox_options:
                     multicombobox_edit = MultiSelectComboBox()
                     setattr(self, f"{widget_attr_base}_multicombobox_edit", multicombobox_edit)
-                    
-                    # Populate with values from config.ini and check them
                     if value:
                         config_items = [item.strip() for item in value.split(',') if item.strip()]
                         for item_text in config_items:
-                            multicombobox_edit.add_option(item_text) # Adds if not present
-                            # Find and check the item
+                            multicombobox_edit.add_option(item_text)
                             for i in range(multicombobox_edit.list_widget.count()):
                                 list_item = multicombobox_edit.list_widget.item(i)
                                 if list_item.text() == item_text:
                                     list_item.setCheckState(Qt.Checked)
                                     break
                     group_layout.addRow(display_key, multicombobox_edit)
-                # Check if the section is "Output" and handle as checkbox (moved to init_analysis_tab)
-                # For other sections, if it's boolean-like, treat as checkbox (e.g. if you add more boolean options to other sections)
-                elif value.lower() in ['true', 'false', '1', '0'] and section != "Output": # Example for other potential checkboxes
-                    checkbox = QCheckBox() # This part is illustrative for other sections
+                elif value.lower() in ['true', 'false', '1', '0'] and section != "Output":
+                    checkbox = QCheckBox()
                     checkbox.setChecked(value.lower() == 'true' or value == '1')
-                    group_layout.addRow(display_key, multicombobox_edit)
+                    group_layout.addRow(display_key, checkbox)
                 else:
                     line_edit = QLineEdit(value)
                     setattr(self, f"{widget_attr_base}_line_edit", line_edit)
                     group_layout.addRow(display_key, line_edit)
-
             group_box.setLayout(group_layout)
             main_layout.addWidget(group_box)
-
-        # Save Button
         save_button = QPushButton("Save Changes")
         save_button.clicked.connect(self.save_config_changes_to_current_file)
         main_layout.addWidget(save_button)
-
         self.options_tab.setLayout(main_layout)
 
     def update_options_with_template(self):
         if self.template_loaded:
-            # Define which MultiSelectComboBox widgets to update
             widgets_to_update = [
                 'ITI_Window_trial_start_stage_multicombobox_edit',
                 'ITI_Window_trial_end_stage_multicombobox_edit',
@@ -514,31 +546,23 @@ class FiberPhotometryApp(QMainWindow):
             QMessageBox.warning(self, "Error", "No template loaded, cannot update trial start stage.")
 
     def update_ui_from_config(self):
-        """Updates the UI elements in the Options tab from the current self.config."""
-        multibox_options = ['trial_start_stage','trial_end_stage','exclusion_list']
+        multibox_options = ['trial_start_stage', 'trial_end_stage', 'exclusion_list']
         for section in self.config.sections():
             for key in self.config[section]:
                 value = self.config[section][key]
                 widget_attr_base = f"{section}_{key}"
-
                 if hasattr(self, f"{widget_attr_base}_checkbox"):
                     widget = getattr(self, f"{widget_attr_base}_checkbox")
                     widget.setChecked(value.lower() == 'true' or value == '1')
                 elif hasattr(self, f"{widget_attr_base}_multicombobox_edit"):
                     widget = getattr(self, f"{widget_attr_base}_multicombobox_edit")
                     config_values_list = [v.strip() for v in value.split(',') if v.strip()]
-
-                    # Uncheck all existing items
                     for i in range(widget.list_widget.count()):
                         widget.list_widget.item(i).setCheckState(Qt.Unchecked)
-
-                    # Add/check items from new config
                     for val_from_config in config_values_list:
                         found = any(widget.list_widget.item(i).text() == val_from_config for i in range(widget.list_widget.count()))
                         if not found:
-                            widget.add_option(val_from_config) # Adds as unchecked
-                        
-                        # Find and check
+                            widget.add_option(val_from_config)
                         for i in range(widget.list_widget.count()):
                             item = widget.list_widget.item(i)
                             if item.text() == val_from_config:
@@ -547,19 +571,16 @@ class FiberPhotometryApp(QMainWindow):
                 elif hasattr(self, f"{widget_attr_base}_line_edit"):
                     widget = getattr(self, f"{widget_attr_base}_line_edit")
                     widget.setText(value)
-        # After updating UI from config, if a template is loaded, ensure its options are available
         if self.template_loaded:
             self.update_options_with_template()
 
     def save_config_changes_to_current_file(self):
-        # Update config with new values from form
         for section in self.config.sections():
             for key in self.config[section]:
                 widget_attr_base = f"{section}_{key}"
                 widget = getattr(self, f"{widget_attr_base}_line_edit", None) or \
                          getattr(self, f"{widget_attr_base}_checkbox", None) or \
                          getattr(self, f"{widget_attr_base}_multicombobox_edit", None)
-
                 if isinstance(widget, QLineEdit):
                     self.config[section][key] = widget.text()
                 elif isinstance(widget, QCheckBox):
@@ -567,7 +588,6 @@ class FiberPhotometryApp(QMainWindow):
                 elif isinstance(widget, MultiSelectComboBox):
                     checked_items = widget.get_checked_items()
                     self.config[section][key] = ",".join(checked_items)
-                    
         try:
             with open(self.config_file_path, 'w') as configfile:
                 self.config.write(configfile)
@@ -582,17 +602,24 @@ class FiberPhotometryApp(QMainWindow):
             self.config = configparser.ConfigParser()
             try:
                 if not self.config.read(self.config_file_path):
-                     QMessageBox.warning(self, "Load Warning", f"Configuration file {self.config_file_path} not found or empty.")
-                     return # Or load defaults / clear UI
-                self.update_ui_from_config() # Refresh UI with new config values
+                    QMessageBox.warning(self, "Load Warning", f"Configuration file {self.config_file_path} not found or empty.")
+                    return
+                self.update_ui_from_config()
                 QMessageBox.information(self, "Loaded", f"Configuration loaded from: {self.config_file_path}")
             except configparser.Error as e:
-                 QMessageBox.critical(self, "Load Error", f"Error reading configuration file {self.config_file_path}: {e}")
+                QMessageBox.critical(self, "Load Error", f"Error reading configuration file {self.config_file_path}: {e}")
             except Exception as e:
-                 QMessageBox.critical(self, "Load Error", f"An unexpected error occurred while loading configuration: {e}")
+                QMessageBox.critical(self, "Load Error", f"An unexpected error occurred while loading configuration: {e}")
 
     def save_configuration_as(self):
         file_path, _ = QFileDialog.getSaveFileName(self, "Save Configuration As...", "", "INI Files (*.ini)")
         if file_path:
             self.config_file_path = file_path
-            self.save_config_changes_to_current_file() # This will save current UI state to the new file path
+            self.save_config_changes_to_current_file()
+
+if __name__ == '__main__':
+    multiprocessing.freeze_support()
+    app = QApplication(sys.argv)
+    main_win = FiberPhotometryApp()
+    main_win.show()
+    sys.exit(app.exec())
