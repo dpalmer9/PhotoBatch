@@ -579,15 +579,20 @@ class PhotometryData:
         length_time = self.abet_time_list.iloc[0, 1] - self.abet_time_list.iloc[0, 0]
         measurements_per_interval = length_time * self.sample_frequency
         doric_time_series = self.doric_pd[['Time']]
+
+        zscore_trials = []
+        deltaf_trials = []
+        time_trials = []
+
         for index, row in self.abet_time_list.iterrows():
             try:
-                start_time = self.abet_time_list.loc[index, 'Start_Time']
+                start_time = row['Start_Time']
                 start_index = pd.merge_asof(left=pd.DataFrame({'Time': [start_time]}), right=doric_time_series, on='Time', direction='nearest').index[0]
             except IndexError:
                 print('Trial Start Out of Bounds, Skipping Event')
                 continue
             try:
-                end_time = self.abet_time_list.loc[index, 'End_Time']
+                end_time = row['End_Time']
                 end_index = pd.merge_asof(left=pd.DataFrame({'Time': [end_time]}), right=doric_time_series, on='Time', direction='nearest').index[0]
             except IndexError:
                 print('Trial End Out of Bounds, Skipping Event')
@@ -611,7 +616,7 @@ class PhotometryData:
             while len(range(start_index, (end_index + 1))) > measurements_per_interval:
                 end_index -= 1
 
-            trial_deltaf = self.doric_pd.iloc[start_index:end_index]
+            trial_deltaf = self.doric_pd.iloc[start_index:end_index].copy()
             if trial_normalize == 'iti':
                 if normalize_side in left_selection_list:
                     trial_start_index_diff = self.trial_definition_times.loc[:, 'Start_Time'].sub(
