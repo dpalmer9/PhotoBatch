@@ -928,7 +928,7 @@ def process_files(file_sheet_path, event_sheet_path, output_options, config):
                     else:
                         photometry_data.write_summary(output)
                     
-                max_peak = photometry_data.calculate_max_peak()
-                auc = photometry_data.calculate_auc(event_window_prior, event_window_follow)
-                results.append([row['abet_path'], event_row['event_name'], max_peak, auc])
+                #max_peak = photometry_data.calculate_max_peak()
+                #auc = photometry_data.calculate_auc(event_window_prior, event_window_follow)
+                results.append([row['abet_path'], event_row['event_name'], photometry_data.partial_dataframe])
     return results
