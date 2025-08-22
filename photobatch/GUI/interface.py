@@ -94,6 +94,9 @@ class FiberPhotometryApp(QMainWindow):
         self.init_options_tab()
         self.init_visualization_tab()
         self.init_menu_bar()
+        # After all UI tabs/widgets are initialized, load any default file paths from the config
+        # and auto-populate the event and file-pair tables if valid file paths are provided.
+        self.load_defaults_from_config()
 
     def init_menu_bar(self):
         menu_bar = QMenuBar(self)
@@ -229,7 +232,15 @@ class FiberPhotometryApp(QMainWindow):
                     item = QTableWidgetItem(str(data.iat[row, col]))
                     item.setFlags(item.flags() | Qt.ItemIsEditable)
                     table_widget.setItem(row, col, item)
+        # Ensure columns and rows are sized to show content and refresh the widget so rows become visible
         table_widget.resizeColumnsToContents()
+        table_widget.resizeRowsToContents()
+        try:
+            table_widget.scrollToTop()
+        except Exception:
+            pass
+        table_widget.repaint()
+        table_widget.setVisible(True)
 
     def filter_event_data(self, row, event_type, table_widget):
         filtered_names = self.event_data[self.event_data['Evnt_Name'] == event_type]['Item_Name'].dropna().unique()
@@ -607,6 +618,47 @@ class FiberPhotometryApp(QMainWindow):
         if file_path:
             self.config_file_path = file_path
             self.save_config_changes_to_current_file()
+
+    def load_defaults_from_config(self):
+        """Load default event and file-pair sheets from the [Filepath] section in the config.
+        Maps:
+          - event_list_path -> event sheet (self.event_table)
+          - file_list_path  -> file pair sheet (self.file_pair_table)
+        This will set the QLineEdit paths and call display_csv_in_table to populate the tables.
+        """
+        try:
+            if "Filepath" not in self.config:
+                return
+
+            file_list_path = self.config['Filepath'].get('file_list_path', '').strip()
+            event_list_path = self.config['Filepath'].get('event_list_path', '').strip()
+
+            # Load event sheet if provided and is a file
+            if event_list_path:
+                try:
+                    if os.path.isfile(event_list_path):
+                        self.event_file_path.setText(event_list_path)
+                        self.display_csv_in_table(event_list_path, self.event_table)
+                    else:
+                        # If path isn't a file, don't attempt to load but still set the path text
+                        self.event_file_path.setText(event_list_path)
+                except Exception as e:
+                    QMessageBox.warning(self, "Error", f"Failed to load event sheet from config: {e}")
+
+            # Load file pair sheet if provided and is a file
+            if file_list_path:
+                try:
+                    if os.path.isfile(file_list_path):
+                        self.file_pair_path.setText(file_list_path)
+                        self.display_csv_in_table(file_list_path, self.file_pair_table)
+                    else:
+                        # If path isn't a file, don't attempt to load but still set the path text
+                        self.file_pair_path.setText(file_list_path)
+                except Exception as e:
+                    QMessageBox.warning(self, "Error", f"Failed to load file pair sheet from config: {e}")
+        except Exception as e:
+            # Protect initialization from crashing if config is malformed
+            print(f"Warning: load_defaults_from_config failed: {e}")
 
 if __name__ == '__main__':
     multiprocessing.freeze_support()
