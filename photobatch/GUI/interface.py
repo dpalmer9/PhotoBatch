@@ -67,6 +67,25 @@ class FiberPhotometryApp(QMainWindow):
         except configparser.Error as e:
             QMessageBox.critical(self, "Config File Error", f"Error reading config file '{self.config_file_path}': {e}")
 
+        # Capture the original configuration text so we can detect changes and prompt to save on exit
+        try:
+            import io
+            if os.path.exists(self.config_file_path):
+                try:
+                    with open(self.config_file_path, 'r', encoding='utf-8') as f:
+                        self._original_config_text = f.read()
+                except Exception:
+                    # Fallback to writing current parser state
+                    buf = io.StringIO()
+                    self.config.write(buf)
+                    self._original_config_text = buf.getvalue()
+            else:
+                buf = io.StringIO()
+                self.config.write(buf)
+                self._original_config_text = buf.getvalue()
+        except Exception:
+            self._original_config_text = None
+
         self.template_loaded = False
         self.tabs = QTabWidget()
         self.home_tab = QWidget()
@@ -492,6 +511,7 @@ class FiberPhotometryApp(QMainWindow):
     def init_options_tab(self):
         main_layout = QVBoxLayout()
         multibox_options = ['trial_start_stage', 'trial_end_stage', 'exclusion_list']
+        file_path_keys = {'file_list_path': 'open', 'event_list_path': 'open', 'output_path': 'directory'}
         for section in self.config.sections():
             if section == "Output":
                 continue
@@ -501,6 +521,7 @@ class FiberPhotometryApp(QMainWindow):
                 value = self.config[section][key]
                 display_key = key.replace("_", " ")
                 widget_attr_base = f"{section}_{key}"
+                # Multi-select options use the custom widget
                 if key in multibox_options:
                     multicombobox_edit = MultiSelectComboBox()
                     setattr(self, f"{widget_attr_base}_multicombobox_edit", multicombobox_edit)
@@ -514,10 +535,41 @@ class FiberPhotometryApp(QMainWindow):
                                     list_item.setCheckState(Qt.Checked)
                                     break
                     group_layout.addRow(display_key, multicombobox_edit)
+                # If the key is one of the file path keys, create a line edit + browse button
+                elif key in file_path_keys:
+                    hbox = QHBoxLayout()
+                    line_edit = QLineEdit(value)
+                    browse_btn = QPushButton("Browse...")
+
+                    def make_browse_handler(le=line_edit, k=key):
+                        def handler():
+                            mode = file_path_keys.get(k, 'open')
+                            if mode == 'open':
+                                file_path, _ = QFileDialog.getOpenFileName(self, f"Select {display_key}", "", "All Files (*)")
+                                if file_path:
+                                    le.setText(file_path)
+                            elif mode == 'directory':
+                                dir_path = QFileDialog.getExistingDirectory(self, f"Select {display_key}")
+                                if dir_path:
+                                    le.setText(dir_path)
+                            else:
+                                # default to open file
+                                file_path, _ = QFileDialog.getOpenFileName(self, f"Select {display_key}", "", "All Files (*)")
+                                if file_path:
+                                    le.setText(file_path)
+                        return handler
+
+                    browse_btn.clicked.connect(make_browse_handler())
+                    hbox.addWidget(line_edit)
+                    hbox.addWidget(browse_btn)
+                    setattr(self, f"{widget_attr_base}_line_edit", line_edit)
+                    group_layout.addRow(display_key, hbox)
+                # Boolean-ish values (except in Output section) get checkboxes
                 elif value.lower() in ['true', 'false', '1', '0'] and section != "Output":
                     checkbox = QCheckBox()
                     checkbox.setChecked(value.lower() == 'true' or value == '1')
                     group_layout.addRow(display_key, checkbox)
+                    setattr(self, f"{widget_attr_base}_checkbox", checkbox)
                 else:
                     line_edit = QLineEdit(value)
                     setattr(self, f"{widget_attr_base}_line_edit", line_edit)
@@ -591,8 +643,16 @@ class FiberPhotometryApp(QMainWindow):
                     checked_items = widget.get_checked_items()
                     self.config[section][key] = ",".join(checked_items)
         try:
-            with open(self.config_file_path, 'w') as configfile:
+            with open(self.config_file_path, 'w', encoding='utf-8') as configfile:
                 self.config.write(configfile)
+            # Update snapshot so subsequent close checks know this is the saved state
+            try:
+                import io
+                buf = io.StringIO()
+                self.config.write(buf)
+                self._original_config_text = buf.getvalue()
+            except Exception:
+                self._original_config_text = None
             QMessageBox.information(self, "Saved", f"Configuration changes saved successfully to {self.config_file_path}.")
         except IOError as e:
             QMessageBox.critical(self, "Save Error", f"Failed to save configuration to {self.config_file_path}: {e}")
@@ -607,6 +667,15 @@ class FiberPhotometryApp(QMainWindow):
                     QMessageBox.warning(self, "Load Warning", f"Configuration file {self.config_file_path} not found or empty.")
                     return
                 self.update_ui_from_config()
+                # After successfully loading a new configuration, snapshot it as the original
+                try:
+                    with open(self.config_file_path, 'r', encoding='utf-8') as f:
+                        self._original_config_text = f.read()
+                except Exception:
+                    import io
+                    buf = io.StringIO()
+                    self.config.write(buf)
+                    self._original_config_text = buf.getvalue()
                 QMessageBox.information(self, "Loaded", f"Configuration loaded from: {self.config_file_path}")
             except configparser.Error as e:
                 QMessageBox.critical(self, "Load Error", f"Error reading configuration file {self.config_file_path}: {e}")
@@ -659,6 +728,44 @@ class FiberPhotometryApp(QMainWindow):
         except Exception as e:
             # Protect initialization from crashing if config is malformed
             print(f"Warning: load_defaults_from_config failed: {e}")
+
+    def _get_config_text(self):
+        import io
+        buf = io.StringIO()
+        self.config.write(buf)
+        return buf.getvalue()
+
+    def closeEvent(self, event):
+        """Prompt to save config if it has changed since it was loaded/snapshotted."""
+        try:
+            current_text = self._get_config_text() if hasattr(self, '_original_config_text') else None
+            original_text = self._original_config_text if hasattr(self, '_original_config_text') else None
+            if original_text is None:
+                # If we don't have a snapshot, still compare against current text; if non-empty, prompt
+                changed = bool(current_text and current_text.strip())
+            else:
+                changed = (current_text != original_text)
+        except Exception:
+            changed = False
+
+        if changed:
+            reply = QMessageBox.question(self, "Save Configuration?",
+                                         "Configuration has changed. Do you want to save changes to the configuration file?",
+                                         QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                                         QMessageBox.Yes)
+            if reply == QMessageBox.Yes:
+                # Save and allow close
+                try:
+                    self.save_config_changes_to_current_file()
+                except Exception as e:
+                    QMessageBox.critical(self, "Save Error", f"Failed to save configuration: {e}")
+                    event.ignore()
+                    return
+            elif reply == QMessageBox.Cancel:
+                event.ignore()
+                return
+            # If No was chosen, just proceed to close without saving
+        event.accept()
 
 if __name__ == '__main__':
     multiprocessing.freeze_support()
