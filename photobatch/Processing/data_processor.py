@@ -5,6 +5,9 @@ import csv
 import configparser
 from datetime import datetime
 from scipy import signal
+from scipy.optimize import curve_fit
+import scipy.sparse as sparse
+from scipy.sparse.linalg import spsolve
 import numpy as np
 import pandas as pd
 import h5py
@@ -351,7 +354,7 @@ class PhotometryData:
             if filter_type in condition_event_names:
                 filter_event_abet = abet_data.loc[(abet_data[self.event_name_col] == str(filter_type)) & (
                             abet_data['Group_ID'] == str(int(filter_group))), :]
-                filter_event_abet = filter_event_abet[~filter_event_abet.isin(exclusion_list)]
+                filter_event_abet = filter_event_bet[~filter_event_abet.isin(exclusion_list)]
                 filter_event_abet = filter_event_abet.dropna(subset=['Item_Name'])
                 for index, value in event_data.items():
                     sub_values = filter_event_abet.loc[:, self.time_var_name]
@@ -525,7 +528,8 @@ class PhotometryData:
         Arguments:
         filter_frequency = The cut-off frequency used for the low-pass filter"""
 
-    def doric_process(self, filter_frequency=6):
+    def doric_filter(self, filter_type='lowpass', filter_name='butterworth', filter_order=4, filter_cutoff=6):
+        # Prepare data and apply selected filter (returns time and filtered signals)
         doric_pandas_cut = self.doric_pandas[self.doric_pandas['Time'] >= 0]
 
         time_data = doric_pandas_cut['Time'].to_numpy()
@@ -536,21 +540,168 @@ class PhotometryData:
         f0_data = f0_data.astype(float)
         f_data = f_data.astype(float)
 
+        # compute sample frequency (Hz)
         self.sample_frequency = len(time_data) / (time_data[(len(time_data) - 1)] - time_data[0])
-        filter_frequency / (self.sample_frequency / 2)
-        butter_filter = signal.butter(N=2, Wn=filter_frequency, btype='lowpass', analog=False, output='sos',
-                                      fs=self.sample_frequency)
-        filtered_f0 = signal.sosfilt(butter_filter, f0_data)
-        filtered_f = signal.sosfilt(butter_filter, f_data)
 
-        filtered_poly = np.polyfit(filtered_f0, filtered_f, 1)
-        filtered_lobf = np.multiply(filtered_poly[0], filtered_f0) + filtered_poly[1]
+        # Default: no filtering applied if parameters are invalid
+        filtered_f0 = f0_data.copy()
+        filtered_f = f_data.copy()
 
-        delta_f = (filtered_f - filtered_lobf) / filtered_lobf
+        filter_type_lower = str(filter_type).lower()
+
+        if filter_type_lower in ('lowpass', 'low_pass', 'low'):
+            # Design a digital low-pass filter. scipy functions accept cutoff in Hz when fs is provided.
+            filt_name = str(filter_name).lower()
+            order = int(filter_order) if filter_order is not None else 4
+            cutoff = float(filter_cutoff)
+
+            if filt_name == 'butterworth' or filt_name == 'butter':
+                sos = signal.butter(N=order, Wn=cutoff, btype='lowpass', analog=False, output='sos', fs=self.sample_frequency)
+            elif filt_name == 'bessel' or filt_name == 'bess':
+                # bessel supports sos output in recent scipy
+                sos = signal.bessel(N=order, Wn=cutoff, btype='lowpass', analog=False, output='sos', fs=self.sample_frequency)
+            elif filt_name in ('chebychev', 'cheby', 'cheby1'):
+                # use Chebyshev type I with default ripple of 1 dB
+                sos = signal.cheby1(N=order, rp=1, Wn=cutoff, btype='lowpass', analog=False, output='sos', fs=self.sample_frequency)
+            else:
+                # Unknown filter name, fallback to Butterworth
+                sos = signal.butter(N=order, Wn=cutoff, btype='lowpass', analog=False, output='sos', fs=self.sample_frequency)
+
+            filtered_f0 = signal.sosfilt(sos, f0_data)
+            filtered_f = signal.sosfilt(sos, f_data)
+
+        elif filter_type_lower in ('smoothing', 'smooth', 'savgol', 'savgolay'):
+            # Use Savitzky-Golay smoothing filter. Interpret filter_order as window length.
+            window_length = int(filter_order) if filter_order is not None else 5
+            # Window length must be odd and >= 3
+            if window_length < 3:
+                window_length = 3
+            if window_length % 2 == 0:
+                window_length += 1
+            # Choose polynomial order smaller than window_length
+            polyorder = min(3, window_length - 1)
+
+            try:
+                filtered_f0 = signal.savgol_filter(f0_data, window_length, polyorder)
+                filtered_f = signal.savgol_filter(f_data, window_length, polyorder)
+            except Exception:
+                # If savgol fails for any reason, fall back to original data
+                filtered_f0 = f0_data.copy()
+                filtered_f = f_data.copy()
+
+        else:
+            # Unknown filter type: leave data unfiltered
+            filtered_f0 = f0_data.copy()
+            filtered_f = f_data.copy()
+
+        return time_data, filtered_f0, filtered_f
+
+
+    def doric_fit(self, fit_type, filtered_f0, filtered_f, time_data=None):
+        # Fit filtered signals, compute delta-F and populate self.doric_pd
+        fit_type_lower = str(fit_type).lower() if fit_type is not None else 'linear'
+
+        if time_data is None:
+            doric_pandas_cut = self.doric_pandas[self.doric_pandas['Time'] >= 0]
+            time_data = doric_pandas_cut['Time'].to_numpy().astype(float)
+
+        # Linear fit: regress active on isobestic
+        if fit_type_lower in ('linear', 'lin'):
+            filtered_poly = np.polyfit(filtered_f0, filtered_f, 1)
+            fitted = np.multiply(filtered_poly[0], filtered_f0) + filtered_poly[1]
+
+        elif fit_type_lower in ('expodecay', 'exp_decay', 'exp'):
+            # Fit an exponential decay to the active signal over time: y = A * exp(-k*t) + C
+            y = filtered_f
+            t = time_data.astype(float)
+            try:
+                A0 = np.max(y) - np.min(y)
+                k0 = 1.0 / max((t[-1] - t[0]), 1.0)
+                C0 = np.min(y)
+                popt, _ = curve_fit(lambda tt, A, k, C: A * np.exp(-k * tt) + C, t, y, p0=[A0, k0, C0], maxfev=10000)
+                fitted = popt[0] * np.exp(-popt[1] * t) + popt[2]
+            except Exception:
+                # Fallback to linear regression between channels if exponential fit fails
+                filtered_poly = np.polyfit(filtered_f0, filtered_f, 1)
+                fitted = np.multiply(filtered_poly[0], filtered_f0) + filtered_poly[1]
+
+        elif fit_type_lower in ('arpls', 'ar_pls', 'ar-pls'):
+            # Asymmetrically reweighted penalized least squares baseline fitting (arPLS)
+            # Implements the algorithm by Baek et al. (2015) / variants using iterative reweighting.
+            y = filtered_f.astype(float)
+            n = y.size
+            lam = 1e5  # smoothing parameter; could be exposed to the caller
+            ratio = 1e-6
+            max_iter = 50
+
+            # Construct second-difference matrix D (size (n-2) x n)
+            e = np.ones(n)
+            D = sparse.diags([e, -2*e, e], [0, 1, 2], shape=(n-2, n))
+            H = lam * (D.transpose().dot(D))  # (n x n) sparse
+
+            # initial weights
+            w = np.ones(n)
+            W = sparse.diags(w, 0)
+
+            z = np.zeros(n)
+            for i in range(max_iter):
+                W = sparse.diags(w, 0)
+                C = W + H
+                # Solve C z = W y
+                try:
+                    z = spsolve(C, w * y)
+                except Exception:
+                    # fallback to dense solve if sparse solve fails
+                    C_dense = (W + H).toarray()
+                    z = np.linalg.solve(C_dense, w * y)
+
+                d = y - z
+                # statistics of negative residuals
+                d_neg = d[d < 0]
+                if d_neg.size == 0:
+                    break
+                m = d_neg.mean()
+                s = d_neg.std()
+                if s <= 0:
+                    break
+                # logistic weighting as described in arPLS paper
+                # logistic(d, m, s) = 1 / (1 + exp(2*(d - (2*s - m))/s))
+                # this sets weight near 1 for values below baseline and near 0 for peaks above baseline
+                wt = 1.0 / (1.0 + np.exp(2.0 * (d - (2.0 * s - m)) / s))
+
+                # enforce bounds [eps, 1-eps]
+                eps = 1e-8
+                wt = np.clip(wt, eps, 1.0)
+
+                # convergence check
+                if np.linalg.norm(w - wt) / np.linalg.norm(w) < ratio:
+                    w = wt
+                    break
+
+                w = wt
+
+            fitted = z
+
+        else:
+            # Unknown fit type: fallback to linear
+            filtered_poly = np.polyfit(filtered_f0, filtered_f, 1)
+            fitted = np.multiply(filtered_poly[0], filtered_f0) + filtered_poly[1]
+
+        # Compute delta-F relative to the fitted baseline
+        # Avoid division by zero
+        with np.errstate(divide='ignore', invalid='ignore'):
+            delta_f = (filtered_f - fitted) / fitted
+            delta_f = np.nan_to_num(delta_f)
 
         self.doric_pd = pd.DataFrame(time_data)
         self.doric_pd['DeltaF'] = delta_f
         self.doric_pd = self.doric_pd.rename(columns={0: 'Time', 1: 'DeltaF'})
+
+
+    def doric_process(self, filter_frequency=6):
+        # Backwards-compatible wrapper: run standard lowpass (butterworth) filter then linear fit
+        time_data, filtered_f0, filtered_f = self.doric_filter(filter_cutoff=filter_frequency)
+        self.doric_fit('linear', filtered_f0, filtered_f, time_data)
 
     """trial_separator - This function takes the extracted photometry data and parses it using the event data obtained
         from the previous functions. This function will check to make sure the events are the same length. 
@@ -648,7 +799,7 @@ class PhotometryData:
                                                         (trial_deltaf['Time'] <= (self.abet_time_list.loc[index, 'Start_Time']) + self.extra_prior), 'DeltaF']
                 else:
                     baseline_data = trial_deltaf.loc[((trial_deltaf['Time'] >= self.abet_time_list.loc[index, 'End_Time']) - self.extra_follow) & 
-                                                        (trial_deltaf['Time'] <= self.abet_time_list.loc[index, 'End_Time']), 'DeltaF']
+                                                        (trial_deltaf['Time'] <= trial_iti_window), 'DeltaF']
 
                 if center_method == 'mean':
                     z_mean = baseline_data.mean()
@@ -890,7 +1041,12 @@ def process_files(file_sheet_path, event_sheet_path, output_options, config):
     center_z = config['ITI_Window']['center_z']
     center_method = config['ITI_Window']['center_method']
 
-    filter_frequency = int(config['Photometry_Processing']['filter_frequency'])
+    filter_type = config['Photometry_Processing']['filter_type']
+    filter_name = config['Photometry_Processing']['filter_name']
+    filter_order = int(config['Photometry_Processing']['filter_order']) 
+    filter_cutoff = int(config['Photometry_Processing']['filter_cutoff'])
+
+    fit_type = config['Photometry_Processing']['fit_type']
 
     exclusion_list = [item.strip() for item in config['Filter']['exclusion_list'].split(',')]
     
@@ -901,7 +1057,9 @@ def process_files(file_sheet_path, event_sheet_path, output_options, config):
             photometry_data.load_abet_data(row['abet_path'])
             photometry_data.load_doric_data(row['doric_path'], row['ctrl_col_num'], row['act_col_num'], row['ttl_col_num'], row['mode'])
             photometry_data.abet_doric_synchronize()
-            photometry_data.doric_process(filter_frequency)
+            # Use the split filter and fit functions
+            time_data, filtered_f0, filtered_f = photometry_data.doric_filter(filter_cutoff)
+            photometry_data.doric_fit(filtered_f0, filtered_f, time_data)
             
             # Extract values from config object
             photometry_data.abet_trial_definition(trial_start_stage, trial_end_stage)
