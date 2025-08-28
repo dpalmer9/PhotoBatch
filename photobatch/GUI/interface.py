@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget, Q
                                QPushButton, QLabel, QFileDialog, QLineEdit, QTableWidget,
                                QTableWidgetItem, QFormLayout, QMessageBox,
                                QGroupBox, QCheckBox, QHBoxLayout, QMenuBar, QComboBox,
-                               QListWidget, QListWidgetItem, QSpinBox)
+                               QListWidget, QListWidgetItem, QSpinBox, QScrollArea)
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 from functools import partial
@@ -509,7 +509,10 @@ class FiberPhotometryApp(QMainWindow):
             QMessageBox.information(self, "Saved", "Graph saved successfully.")
 
     def init_options_tab(self):
-        main_layout = QVBoxLayout()
+        # Create a scrollable area for the Options tab
+        outer_layout = QVBoxLayout()
+        content_widget = QWidget()
+        content_layout = QVBoxLayout(content_widget)
         multibox_options = ['trial_start_stage', 'trial_end_stage', 'exclusion_list']
         file_path_keys = {'file_list_path': 'open', 'event_list_path': 'open', 'output_path': 'directory'}
         for section in self.config.sections():
@@ -570,16 +573,116 @@ class FiberPhotometryApp(QMainWindow):
                     checkbox.setChecked(value.lower() == 'true' or value == '1')
                     group_layout.addRow(display_key, checkbox)
                     setattr(self, f"{widget_attr_base}_checkbox", checkbox)
+                elif key == 'filter_type':
+                    combo = QComboBox()
+                    combo.addItems(['lowpass', 'smoothing'])
+                    combo.setCurrentText(value)
+                    group_layout.addRow(display_key, combo)
+                    setattr(self, f"{widget_attr_base}_combobox", combo)
+                elif key == 'filter_name':
+                    combo = QComboBox()
+                    # Find the corresponding filter_type combobox
+                    filter_type_key = f"{section}_filter_type_combobox"
+                    filter_type_combo = getattr(self, filter_type_key, None)
+                    def update_filter_name_options():
+                        filter_type_val = filter_type_combo.currentText() if filter_type_combo else self.config[section].get('filter_type', 'lowpass')
+                        combo.clear()
+                        if filter_type_val == 'lowpass':
+                            combo.addItems(['butter', 'bessel', 'chebychev'])
+                        elif filter_type_val == 'smoothing':
+                            combo.addItem('savitsky-golay')
+                        # Set to config value if present
+                        combo.setCurrentText(value)
+                    # If filter_type combobox exists, connect signal
+                    if filter_type_combo:
+                        filter_type_combo.currentTextChanged.connect(lambda _: update_filter_name_options())
+                    update_filter_name_options()
+                    group_layout.addRow(display_key, combo)
+                    setattr(self, f"{widget_attr_base}_combobox", combo)
+                elif key == 'savgol_window' or key == 'savgol_polyorder':
+                    # Only show if filter_name combobox is set to 'savitsky-golay'
+                    filter_name_key = f"{section}_filter_name_combobox"
+                    filter_name_combo = getattr(self, filter_name_key, None)
+                    spin_box = QSpinBox()
+                    spin_box.setValue(int(value))
+                    label = QLabel(display_key)
+                    group_layout.addRow(label, spin_box)
+                    spin_box.setVisible(False)
+                    label.setVisible(False)
+                    setattr(self, f"{widget_attr_base}_spin_box", spin_box)
+                    def update_savgol_visibility():
+                        visible = filter_name_combo and filter_name_combo.currentText() == 'savitsky-golay'
+                        spin_box.setVisible(visible)
+                        label.setVisible(visible)
+                    if filter_name_combo:
+                        filter_name_combo.currentTextChanged.connect(lambda _: update_savgol_visibility())
+                        update_savgol_visibility()
+                elif key == 'filter_order' or key == 'filter_cutoff':
+                    # Only show if filter_type combobox is set to 'lowpass'
+                    filter_type_key = f"{section}_filter_type_combobox"
+                    filter_type_combo = getattr(self, filter_type_key, None)
+                    spin_box = QSpinBox()
+                    config_default = self.config[section].get(key, None)
+                    if key == 'filter_cutoff':
+                        spin_box.setRange(1, 1000)
+                        default_value = int(config_default) if config_default and config_default.isdigit() else 1
+                    else:
+                        spin_box.setRange(1, 10)
+                        default_value = int(config_default) if config_default and config_default.isdigit() else 1
+                    spin_box.setValue(default_value)
+                    label = QLabel(display_key)
+                    group_layout.addRow(label, spin_box)
+                    spin_box.setVisible(False)
+                    label.setVisible(False)
+                    setattr(self, f"{widget_attr_base}_spin_box", spin_box)
+                    def update_lowpass_visibility():
+                        visible = filter_type_combo and filter_type_combo.currentText() == 'lowpass'
+                        spin_box.setVisible(visible)
+                        label.setVisible(visible)
+                    if filter_type_combo:
+                        filter_type_combo.currentTextChanged.connect(lambda _: update_lowpass_visibility())
+                        update_lowpass_visibility()
+                elif key == 'cheby_ripple':
+                    # Only show if filter_name combobox is 'chebychev' AND filter_type combobox is 'smoothing'
+                    filter_name_key = f"{section}_filter_name_combobox"
+                    filter_type_key = f"{section}_filter_type_combobox"
+                    filter_name_combo = getattr(self, filter_name_key, None)
+                    filter_type_combo = getattr(self, filter_type_key, None)
+                    double_spin_box = QSpinBox()
+                    double_spin_box.setRange(1, 10)
+                    double_spin_box.setValue(int(value) if value.isdigit() else 1)
+                    label = QLabel(display_key)
+                    group_layout.addRow(label, double_spin_box)
+                    double_spin_box.setVisible(False)
+                    label.setVisible(False)
+                    setattr(self, f"{widget_attr_base}_double_spin_box", double_spin_box)
+                    def update_cheby_visibility():
+                        visible = (
+                            filter_name_combo and filter_type_combo and
+                            filter_name_combo.currentText() == 'chebychev' and
+                            filter_type_combo.currentText() == 'smoothing'
+                        )
+                        double_spin_box.setVisible(visible)
+                        label.setVisible(visible)
+                    if filter_name_combo:
+                        filter_name_combo.currentTextChanged.connect(lambda _: update_cheby_visibility())
+                    if filter_type_combo:
+                        filter_type_combo.currentTextChanged.connect(lambda _: update_cheby_visibility())
+                    update_cheby_visibility()
                 else:
                     line_edit = QLineEdit(value)
                     setattr(self, f"{widget_attr_base}_line_edit", line_edit)
                     group_layout.addRow(display_key, line_edit)
             group_box.setLayout(group_layout)
-            main_layout.addWidget(group_box)
+            content_layout.addWidget(group_box)
         save_button = QPushButton("Save Changes")
         save_button.clicked.connect(self.save_config_changes_to_current_file)
-        main_layout.addWidget(save_button)
-        self.options_tab.setLayout(main_layout)
+        content_layout.addWidget(save_button)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(content_widget)
+        outer_layout.addWidget(scroll)
+        self.options_tab.setLayout(outer_layout)
 
     def update_options_with_template(self):
         if self.template_loaded:
