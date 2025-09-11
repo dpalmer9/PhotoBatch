@@ -496,31 +496,47 @@ class PhotometryData:
             print('ABET II File missing TTL Pulse Output. Ending Analysis.')
             return
 
-        doric_ttl_times = doric_ttl_active['Time'].values.astype(float)
+        doric_ttl_times_all = doric_ttl_active['Time'].values.astype(float)
+        # Filter doric_ttl_times to only keep the first TTL in each pulse (100ms tolerance)
+        tolerance = 0.1  # 100 ms
+        filtered_doric_ttl_times = []
+        last_time = None
+        for t in doric_ttl_times_all:
+            if last_time is None or (t - last_time) > tolerance:
+                filtered_doric_ttl_times.append(t)
+                last_time = t
+        doric_ttl_times = np.array(filtered_doric_ttl_times)
+
         abet_ttl_times = abet_ttl_active.iloc[:, 0].values.astype(float)
+        print(doric_ttl_times)
+        print(abet_ttl_times)
 
         # Find corresponding TTL pulses.  Assume Doric has more pulses.
-        # This is a simplified approach; a more robust method might be needed for noisy data.
         paired_doric_times = []
         paired_abet_times = []
         doric_index = 0
         for abet_time in abet_ttl_times:
             while doric_index < len(doric_ttl_times) and doric_ttl_times[doric_index] < abet_time:
                 doric_index += 1
-            if doric_index < len(doric_ttl_times):  # Found a Doric pulse after the ABET pulse
+                print([doric_ttl_times[doric_index], abet_time])
+            if doric_index < len(doric_ttl_times):
                 paired_doric_times.append(doric_ttl_times[doric_index])
                 paired_abet_times.append(abet_time)
+                doric_index += 1
             else:
-                break  # No more Doric pulses
+                break
 
         if not paired_doric_times:
             print("No matching TTL pulses found. Synchronization failed.")
             return
 
         #  Use linear regression on the *paired* TTL pulses
+        # print(paired_doric_times)
+        # print(paired_abet_times)
         ttl_model = LinearRegression()
         ttl_model.fit(np.array(paired_doric_times).reshape(-1, 1), paired_abet_times)
         self.doric_pandas['Time'] = (self.doric_pandas['Time'] * ttl_model.coef_[0]) + ttl_model.intercept_
+        print(self.doric_pandas['Time'].head(20))
 
     """doric_process - This function calculates the delta-f value based on the isobestic and active channel data.
         The two channels are first put through a 2nd order low-pass butterworth filter with a user-specified cutoff. 
@@ -739,11 +755,20 @@ class PhotometryData:
         time_trials = []
 
         doric_time_array = self.doric_pd['Time'].values  # For fast searchsorted
+        doric_deltaf_array = self.doric_pd['DeltaF'].values
+
+        # Convert doric_pd columns to numpy arrays for fast slicing
+        doric_time_array = self.doric_pd['Time'].values
+        doric_deltaf_array = self.doric_pd['DeltaF'].values
+
+        # Prepare lists to collect trial data
+        time_trials = []
+        zscore_trials = []
+        deltaf_trials = []
 
         for index, row in self.abet_time_list.iterrows():
             try:
                 start_time = row['Start_Time']
-                # Use np.searchsorted for fast index lookup
                 start_index = np.searchsorted(doric_time_array, start_time, side='left')
                 if start_index >= len(doric_time_array):
                     print('Trial Start Out of Bounds, Skipping Event')
@@ -762,130 +787,102 @@ class PhotometryData:
                 continue
 
             try:
-                while self.doric_pd.iloc[start_index, 0] > self.abet_time_list.loc[index, 'Start_Time'] and start_index > 0:
+                while doric_time_array[start_index] > self.abet_time_list.loc[index, 'Start_Time'] and start_index > 0:
                     start_index -= 1
             except IndexError:
                 continue
 
             try:
-                while self.doric_pd.iloc[end_index, 0] < self.abet_time_list.loc[index, 'End_Time'] and end_index < len(doric_time_array) - 1:
+                while doric_time_array[end_index] < self.abet_time_list.loc[index, 'End_Time'] and end_index < len(doric_time_array) - 1:
                     end_index += 1
             except IndexError:
                 continue
 
-            while len(range(start_index, (end_index + 1))) < measurements_per_interval:
+            while (end_index - start_index + 1) < measurements_per_interval:
                 end_index += 1
-
-            while len(range(start_index, (end_index + 1))) > measurements_per_interval:
+            while (end_index - start_index + 1) > measurements_per_interval:
                 end_index -= 1
 
-            trial_deltaf = self.doric_pd.iloc[start_index:end_index].copy()
+            # Slice numpy arrays for this trial
+            trial_time = doric_time_array[start_index:end_index]
+            trial_deltaf = doric_deltaf_array[start_index:end_index]
+
+            # Compute z-score normalization as before
             if trial_normalize == 'iti':
                 if normalize_side in left_selection_list:
                     trial_start_index_diff = self.trial_definition_times.loc[:, 'Start_Time'].sub(
-                        (self.abet_time_list.loc[index, 'Start_Time'] + self.extra_prior))  # .abs().idxmin()
+                        (self.abet_time_list.loc[index, 'Start_Time'] + self.extra_prior))
                     trial_start_index_diff[trial_start_index_diff > 0] = np.nan
                     trial_start_index = trial_start_index_diff.abs().idxmin(skipna=True)
                     trial_start_window = self.trial_definition_times.iloc[trial_start_index, 0]
                     trial_iti_window = trial_start_window - float(trial_iti_pad)
-                    iti_data = self.doric_pd.loc[(self.doric_pd.loc[:, 'Time'] >= trial_iti_window) & (
-                                self.doric_pd.loc[:, 'Time'] <= trial_start_window), 'DeltaF']
+                    iti_mask = (doric_time_array >= trial_iti_window) & (doric_time_array <= trial_start_window)
+                    iti_data = doric_deltaf_array[iti_mask]
                 else:
                     trial_end_index = self.trial_definition_times.loc[:, 'End_Time'].sub(
                         self.abet_time_list.loc[index, 'End_Time']).abs().idxmin()
                     trial_end_window = self.trial_definition_times.iloc[trial_end_index, 0]
                     trial_iti_window = trial_end_window + trial_iti_pad
-                    iti_data = self.doric_pd.loc[(self.doric_pd['Time'] >= trial_end_window) & (
-                                self.doric_pd['Time'] <= trial_iti_window), 'DeltaF']
+                    iti_mask = (doric_time_array >= trial_end_window) & (doric_time_array <= trial_iti_window)
+                    iti_data = doric_deltaf_array[iti_mask]
 
                 if center_method == 'mean':
-                    z_mean = iti_data.mean()
-                    z_sd = iti_data.std()
+                    z_mean = iti_data.mean() if len(iti_data) > 0 else 0
+                    z_sd = iti_data.std() if len(iti_data) > 0 else 1
                 elif center_method == 'median':
-                    z_mean = iti_data.median()
-                    z_dev = np.absolute(np.subtract(iti_data, z_mean))
-                    z_sd = z_dev.median()
+                    z_mean = np.median(iti_data) if len(iti_data) > 0 else 0
+                    z_dev = np.abs(iti_data - z_mean)
+                    z_sd = np.median(z_dev) if len(z_dev) > 0 else 1
             elif trial_normalize == 'prior':
                 if normalize_side in left_selection_list:
-                    baseline_data = trial_deltaf.loc[(trial_deltaf['Time'] >= self.abet_time_list.loc[index, 'Start_Time']) & 
-                                                        (trial_deltaf['Time'] <= (self.abet_time_list.loc[index, 'Start_Time']) + self.extra_prior), 'DeltaF']
+                    baseline_mask = (trial_time >= self.abet_time_list.loc[index, 'Start_Time']) & \
+                                    (trial_time <= (self.abet_time_list.loc[index, 'Start_Time']) + self.extra_prior)
+                    baseline_data = trial_deltaf[baseline_mask]
                 else:
-                    baseline_data = trial_deltaf.loc[((trial_deltaf['Time'] >= self.abet_time_list.loc[index, 'End_Time']) - self.extra_follow) & 
-                                                        (trial_deltaf['Time'] <= trial_iti_window), 'DeltaF']
+                    baseline_mask = ((trial_time >= self.abet_time_list.loc[index, 'End_Time']) - self.extra_follow) & \
+                                    (trial_time <= trial_iti_window)
+                    baseline_data = trial_deltaf[baseline_mask]
 
                 if center_method == 'mean':
-                    z_mean = baseline_data.mean()
-                    z_sd = baseline_data.std()
+                    z_mean = baseline_data.mean() if len(baseline_data) > 0 else 0
+                    z_sd = baseline_data.std() if len(baseline_data) > 0 else 1
                 elif center_method == 'median':
-                    z_mean = baseline_data.median()
-                    z_dev = np.absolute(np.subtract(baseline_data, z_mean))
-                    z_sd = z_dev.median()
+                    z_mean = np.median(baseline_data) if len(baseline_data) > 0 else 0
+                    z_dev = np.abs(baseline_data - z_mean)
+                    z_sd = np.median(z_dev) if len(z_dev) > 0 else 1
             elif trial_normalize == 'whole':
-                deltaf_split = trial_deltaf.loc[:, 'DeltaF']
                 if center_method == 'mean':
-                    z_mean = deltaf_split.mean()
-                    z_sd = deltaf_split.std()
+                    z_mean = trial_deltaf.mean() if len(trial_deltaf) > 0 else 0
+                    z_sd = trial_deltaf.std() if len(trial_deltaf) > 0 else 1
                 elif center_method == 'median':
-                    z_mean = deltaf_split.median()
-                    z_dev = np.absolute(np.subtract(deltaf_split, z_mean))
-                    z_sd = z_dev.median()
+                    z_mean = np.median(trial_deltaf) if len(trial_deltaf) > 0 else 0
+                    z_dev = np.abs(trial_deltaf - z_mean)
+                    z_sd = np.median(z_dev) if len(z_dev) > 0 else 1
 
-            trial_deltaf.loc[:, 'zscore'] = trial_deltaf.loc[:, 'DeltaF'].map(lambda x: ((x - z_mean) / z_sd))
+            # Calculate zscore for this trial
+            zscore = (trial_deltaf - z_mean) / z_sd if z_sd != 0 else trial_deltaf - z_mean
 
-            colname_1 = 'Time Trial ' + str(trial_num)
-            colname_2 = 'Z-Score Trial ' + str(trial_num)
-            colname_3 = 'Delta-F Trial ' + str(trial_num)
+            # Store for later DataFrame construction
+            time_trials.append(trial_time)
+            zscore_trials.append(zscore)
+            deltaf_trials.append(trial_deltaf)
 
-            if trial_num == 1:
-                self.final_dataframe = trial_deltaf.loc[:, ('Time', 'zscore')]
-                self.final_dataframe = self.final_dataframe.reset_index(drop=True)
-                self.final_dataframe = self.final_dataframe.rename(
-                    columns={'Time': colname_1, 'zscore': colname_2})
+            trial_num += 1
 
-                self.partial_dataframe = trial_deltaf.loc[:, 'zscore']
-                self.partial_dataframe = self.partial_dataframe.to_frame()
-                self.partial_dataframe = self.partial_dataframe.reset_index(drop=True)
-                self.partial_dataframe = self.partial_dataframe.rename(columns={'zscore': colname_2})
+        # After loop, build DataFrames from lists
+        # Pad arrays to the same length for DataFrame construction
+        max_len = max(len(arr) for arr in time_trials) if time_trials else 0
+        def pad(arr):
+            return np.pad(arr, (0, max_len - len(arr)), constant_values=np.nan)
+        time_df = pd.DataFrame({f'Time Trial {i+1}': pad(arr) for i, arr in enumerate(time_trials)})
+        zscore_df = pd.DataFrame({f'Z-Score Trial {i+1}': pad(arr) for i, arr in enumerate(zscore_trials)})
+        deltaf_df = pd.DataFrame({f'Delta-F Trial {i+1}': pad(arr) for i, arr in enumerate(deltaf_trials)})
 
-                self.partial_deltaf = trial_deltaf.loc[:, 'DeltaF']
-                self.partial_deltaf = self.partial_deltaf.to_frame()
-                self.partial_deltaf = self.partial_deltaf.reset_index(drop=True)
-                self.partial_deltaf = self.partial_deltaf.rename(columns={'DeltaF': colname_3})
-
-                self.final_deltaf = trial_deltaf.loc[:, ('Time', 'DeltaF')]
-                self.final_deltaf = self.final_deltaf.reset_index(drop=True)
-                self.final_deltaf = self.final_deltaf.rename(columns={'Time': colname_1, 'DeltaF': colname_3})
-
-                trial_num += 1
-            else:
-                trial_deltaf = trial_deltaf.reset_index(drop=True)
-                dataframe_len = len(self.final_dataframe.index)
-                trial_len = len(trial_deltaf.index)
-                if trial_len > dataframe_len:
-                    len_diff = trial_len - dataframe_len
-                    new_index = list(range(dataframe_len, (dataframe_len + len_diff)))
-                    self.final_dataframe = self.final_dataframe.reindex(
-                        self.final_dataframe.index.union(new_index))
-                    self.partial_dataframe = self.partial_dataframe.reindex(
-                        self.partial_dataframe.index.union(new_index))
-                    self.partial_deltaf = self.partial_deltaf.reindex(
-                        self.partial_deltaf.index.union(new_index))
-                    self.final_deltaf = self.final_deltaf.reindex(
-                        self.final_deltaf.index.union(new_index))
-
-                trial_deltaf = trial_deltaf.rename(columns={'Time': colname_1, 'zscore': colname_2,
-                                                            'DeltaF': colname_3})
-
-                self.partial_dataframe = pd.concat([self.partial_dataframe, trial_deltaf[colname_2]],
-                                                    axis=1)
-                self.partial_deltaf = pd.concat([self.partial_deltaf, trial_deltaf[colname_3]],
-                                                axis=1)
-                self.final_dataframe = pd.concat(
-                    [self.final_dataframe, trial_deltaf[colname_1], trial_deltaf[colname_2]],
-                    axis=1)
-                self.final_deltaf = pd.concat([self.final_deltaf, trial_deltaf[colname_1], trial_deltaf[colname_3]],
-                                                axis=1)
-                trial_num += 1
+        # Set self.partial_dataframe, self.final_dataframe, etc. as before
+        self.partial_dataframe = zscore_df
+        self.partial_deltaf = deltaf_df
+        self.final_dataframe = pd.concat([time_df, zscore_df], axis=1)
+        self.final_deltaf = pd.concat([time_df, deltaf_df], axis=1)
 
     def calculate_max_peak(self):
         if not self.partial_dataframe.empty:
