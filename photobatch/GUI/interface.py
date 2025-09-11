@@ -59,7 +59,7 @@ class FiberPhotometryApp(QMainWindow):
         self.config_file_path = os.path.normpath(os.path.join(script_dir, '..', 'Config.ini'))
         self.config = configparser.ConfigParser()
 
-        self.results_data = []
+        self.analysis_results = []
 
         try:
             if not self.config.read(self.config_file_path):
@@ -365,7 +365,7 @@ class FiberPhotometryApp(QMainWindow):
         self.analysis_tab.setLayout(layout)
 
     def run_analysis_action(self):
-        event_sheet_path = self.event_file_path.text()        
+        event_sheet_path = self.event_file_path.text()
         print(event_sheet_path)
         file_pair_path = self.file_pair_path.text()
 
@@ -380,26 +380,28 @@ class FiberPhotometryApp(QMainWindow):
             if hasattr(self, widget_attr_name):
                 checkbox = getattr(self, widget_attr_name)
                 if checkbox.isChecked():
-                    output_selections.append(i+1)
+                    output_selections.append(i + 1)
 
-        self.results_data = data_processor.process_files(file_pair_path, event_sheet_path, output_selections, self.config)
+        self.analysis_results = data_processor.process_files(file_pair_path, event_sheet_path, output_selections, self.config)
 
-        # Display the results
-        self.display_results(self.results_data)
+        # Update the UI with the new results
+        self.update_results_and_visualization_options()
         QMessageBox.information(self, "Analysis", "Analysis complete!")
 
-    def display_results(self, results_data):
-        self.results_table.setRowCount(len(results_data))
-        self.results_table.setColumnCount(4)
-        self.results_table.setHorizontalHeaderLabels(['File', 'Behavior', 'Max Peak', 'AUC'])
-        for i, row_data in enumerate(results_data):
-            for j, cell_data in enumerate(row_data[:4]):
-                self.results_table.setItem(i, j, QTableWidgetItem(str(cell_data)))
-        self.results_table.resizeColumnsToContents()
+    def update_results_and_visualization_options(self):
+        self.update_vis_file_select()
+        self.update_results_table()
 
     def init_results_tab(self):
         layout = QVBoxLayout()
         layout.addWidget(QLabel("Analysis Results"))
+
+        controls_layout = QFormLayout()
+        self.results_file_select = QComboBox()
+        self.results_file_select.currentTextChanged.connect(self.update_results_table)
+        controls_layout.addRow("Select File:", self.results_file_select)
+        layout.addLayout(controls_layout)
+
         self.results_table = QTableWidget()
         layout.addWidget(self.results_table)
         save_button = QPushButton("Save Results")
@@ -458,15 +460,44 @@ class FiberPhotometryApp(QMainWindow):
         layout.addLayout(save_layout)
         self.visualization_tab.setLayout(layout)
 
+    def update_results_table(self):
+        selected_file = self.results_file_select.currentText()
+        if not selected_file or not self.analysis_results:
+            self.results_table.clear()
+            self.results_table.setRowCount(0)
+            self.results_table.setColumnCount(0)
+            return
+
+        # Filter results for the selected file
+        filtered_results = [res for res in self.analysis_results if res['file'] == selected_file]
+
+        self.results_table.setRowCount(len(filtered_results))
+        self.results_table.setColumnCount(3) # Behavior, Max Peak, AUC
+        self.results_table.setHorizontalHeaderLabels(['Behavior', 'Max Peak', 'AUC'])
+        for i, res in enumerate(filtered_results):
+            self.results_table.setItem(i, 0, QTableWidgetItem(res['behavior']))
+            self.results_table.setItem(i, 1, QTableWidgetItem(f"{res['max_peak']:.4f}"))
+            self.results_table.setItem(i, 2, QTableWidgetItem(f"{res['auc']:.4f}"))
+        self.results_table.resizeColumnsToContents()
+
     def update_vis_file_select(self):
         self.vis_file_select.clear()
-        for i, row_data in enumerate(self.results_data):
-            self.vis_file_select.addItems(row_data[0])
+        self.results_file_select.clear()
+        if not self.analysis_results:
+            return
+
+        files = sorted(list(set([res['file'] for res in self.analysis_results])))
+        self.vis_file_select.addItems(files)
+        self.results_file_select.addItems(files)
 
     def update_vis_behavior_select(self):
         self.vis_behavior_select.clear()
-        for i, row_data in enumerate(self.results_data):
-            self.vis_file_select.addItems(row_data[1])
+        selected_file = self.vis_file_select.currentText()
+        if not selected_file or not self.analysis_results:
+            return
+
+        behaviors = sorted(list(set([res['behavior'] for res in self.analysis_results if res['file'] == selected_file])))
+        self.vis_behavior_select.addItems(behaviors)
 
     def generate_plot(self):
         file_path = self.vis_file_select.currentText()
@@ -474,27 +505,29 @@ class FiberPhotometryApp(QMainWindow):
         event_prior = float(self.event_prior_input.text())
         event_follow = float(self.event_follow_input.text())
 
-        # Find the index in self.results_data that matches the file_path and behavior
-        found_index = next((i for i, row in enumerate(self.results_data) if row[0] == file_path and row[1] == behavior), None)
+        # Find the data in self.analysis_results that matches the file_path and behavior
+        result_data = next((res for res in self.analysis_results if res['file'] == file_path and res['behavior'] == behavior), None)
 
-        if found_index is not None:
-            self.plot_data = self.results_data[found_index][5]  # plot data is in index 2
+        if result_data and not result_data['plot_data'].empty:
+            self.plot_data = result_data['plot_data']
         else:
-            QMessageBox.warning(self, "Data Not Found", f"No data matches the selected file and behavior.")
-            return
-        
-        if not self.plot_data.empty:
             self.canvas.axes.clear()
-            time_axis = np.linspace(-event_prior, event_follow, len(self.plot_data))
-            mean_data = self.plot_data.mean(axis=1)
-            sem_data = self.plot_data.sem(axis=1)
-            self.canvas.axes.plot(time_axis, mean_data, label='Mean')
-            self.canvas.axes.fill_between(time_axis, mean_data - sem_data, mean_data + sem_data, alpha=0.2, label='SEM')
-            self.canvas.axes.axvline(x=0, color='r', linestyle='--')
-            self.canvas.axes.set_xlabel("Time (s)")
-            self.canvas.axes.set_ylabel("Signal")
-            self.canvas.axes.set_title(f"Perievent Histogram for {behavior}")
             self.canvas.draw()
+            QMessageBox.warning(self, "Data Not Found", f"No data matches the selected file and behavior, or the data is empty.")
+            return
+
+        self.canvas.axes.clear()
+        time_axis = np.linspace(-event_prior, event_follow, len(self.plot_data.index))
+        mean_data = self.plot_data.mean(axis=1)
+        sem_data = self.plot_data.sem(axis=1)
+        self.canvas.axes.plot(time_axis, mean_data, label='Mean')
+        self.canvas.axes.fill_between(time_axis, mean_data - sem_data, mean_data + sem_data, alpha=0.2, label='SEM')
+        self.canvas.axes.axvline(x=0, color='r', linestyle='--')
+        self.canvas.axes.set_xlabel("Time (s)")
+        self.canvas.axes.set_ylabel("Signal")
+        self.canvas.axes.set_title(f"Perievent Histogram for {behavior}")
+        self.canvas.axes.legend()
+        self.canvas.draw()
 
     def save_plot_data(self):
         file_path, _ = QFileDialog.getSaveFileName(self, "Save Plot Data", "", "CSV Files (*.csv)")

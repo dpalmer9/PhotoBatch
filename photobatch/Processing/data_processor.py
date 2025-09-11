@@ -1076,7 +1076,7 @@ def process_files(file_sheet_path, event_sheet_path, output_options, config):
                     extra_follow_time = event_window_follow,
                     exclusion_list = exclusion_list
                 )
-                photometry_data.trial_separator(trial_normalize=center_z, 
+                photometry_data.trial_separator(trial_normalize=center_z,
                                                 trial_iti_pad=iti_prior_trial,
                                                 center_method=center_method)
 
@@ -1085,8 +1085,43 @@ def process_files(file_sheet_path, event_sheet_path, output_options, config):
                         photometry_data.write_data(output)
                     else:
                         photometry_data.write_summary(output)
-                    
-                #max_peak = photometry_data.calculate_max_peak()
-                #auc = photometry_data.calculate_auc(event_window_prior, event_window_follow)
-                results.append([row['abet_path'], event_row['event_name'], photometry_data.partial_dataframe])
+
+                max_peak = photometry_data.calculate_max_peak()
+                auc = photometry_data.calculate_auc(-event_window_prior, event_window_follow)
+
+                results.append({
+                    "file": os.path.basename(row['abet_path']),
+                    "behavior": event_row['event_name'],
+                    "max_peak": max_peak,
+                    "auc": auc,
+                    "plot_data": photometry_data.get_peri_event_data()
+                })
+
+    # Create a combined result for each behavior
+    combined_results = {}
+    for res in results:
+        behavior = res['behavior']
+        if behavior not in combined_results:
+            combined_results[behavior] = {
+                "file": "Combined",
+                "behavior": behavior,
+                "plot_data": pd.DataFrame()
+            }
+        combined_results[behavior]["plot_data"] = pd.concat([combined_results[behavior]["plot_data"], res["plot_data"]], axis=1)
+
+    for behavior, data in combined_results.items():
+        if not data["plot_data"].empty:
+            data["max_peak"] = data["plot_data"].max().mean()
+
+            time_series = np.linspace(-event_window_prior, event_window_follow, num=len(data["plot_data"]))
+            auc_values = []
+            for col in data["plot_data"].columns:
+                auc_values.append(np.trapz(y=data["plot_data"][col], x=time_series))
+            data["auc"] = np.mean(auc_values)
+        else:
+            data["max_peak"] = 0
+            data["auc"] = 0
+
+        results.append(data)
+
     return results
