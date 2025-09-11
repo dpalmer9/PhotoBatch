@@ -11,7 +11,6 @@ from scipy.sparse.linalg import spsolve
 import numpy as np
 import pandas as pd
 import h5py
-import multiprocessing
 from sklearn.linear_model import LinearRegression
 
 pd.set_option('mode.chained_assignment', None)
@@ -269,6 +268,7 @@ class PhotometryData:
         self.ttl_pandas = pd.DataFrame({'Time': ttl_time, 'TTL': ttl_data})
         self.doric_pandas = self.doric_pandas.astype('float')
         self.ttl_pandas = self.ttl_pandas.astype('float')
+        print(act_data)
 
         return
 
@@ -471,6 +471,7 @@ class PhotometryData:
         abet_end_times = self.abet_event_times + extra_follow_time
         self.abet_event_times = pd.concat([abet_start_times, abet_end_times], axis=1)
         self.abet_event_times.columns = ['Start_Time', 'End_Time']
+        print(self.abet_event_times)
         self.event_name = start_event_item_name
         self.extra_follow = extra_follow_time
         self.extra_prior = extra_prior_time
@@ -495,8 +496,8 @@ class PhotometryData:
             print('ABET II File missing TTL Pulse Output. Ending Analysis.')
             return
 
-        doric_ttl_times = doric_ttl_active['Time'].values
-        abet_ttl_times = abet_ttl_active.iloc[:, 0].values
+        doric_ttl_times = doric_ttl_active['Time'].values.astype(float)
+        abet_ttl_times = abet_ttl_active.iloc[:, 0].values.astype(float)
 
         # Find corresponding TTL pulses.  Assume Doric has more pulses.
         # This is a simplified approach; a more robust method might be needed for noisy data.
@@ -594,6 +595,7 @@ class PhotometryData:
             filtered_f0 = f0_data.copy()
             filtered_f = f_data.copy()
 
+        print(filtered_f)
         return time_data, filtered_f0, filtered_f
 
 
@@ -692,6 +694,7 @@ class PhotometryData:
         with np.errstate(divide='ignore', invalid='ignore'):
             delta_f = (filtered_f - fitted) / fitted
             delta_f = np.nan_to_num(delta_f)
+            print(delta_f)
 
         self.doric_pd = pd.DataFrame(time_data)
         self.doric_pd['DeltaF'] = delta_f
@@ -735,28 +738,37 @@ class PhotometryData:
         deltaf_trials = []
         time_trials = []
 
+        doric_time_array = self.doric_pd['Time'].values  # For fast searchsorted
+
         for index, row in self.abet_time_list.iterrows():
             try:
                 start_time = row['Start_Time']
-                start_index = pd.merge_asof(left=pd.DataFrame({'Time': [start_time]}), right=doric_time_series, on='Time', direction='nearest').index[0]
+                # Use np.searchsorted for fast index lookup
+                start_index = np.searchsorted(doric_time_array, start_time, side='left')
+                if start_index >= len(doric_time_array):
+                    print('Trial Start Out of Bounds, Skipping Event')
+                    continue
             except IndexError:
                 print('Trial Start Out of Bounds, Skipping Event')
                 continue
             try:
                 end_time = row['End_Time']
-                end_index = pd.merge_asof(left=pd.DataFrame({'Time': [end_time]}), right=doric_time_series, on='Time', direction='nearest').index[0]
+                end_index = np.searchsorted(doric_time_array, end_time, side='right') - 1
+                if end_index < 0 or end_index >= len(doric_time_array):
+                    print('Trial End Out of Bounds, Skipping Event')
+                    continue
             except IndexError:
                 print('Trial End Out of Bounds, Skipping Event')
                 continue
 
             try:
-                while self.doric_pd.iloc[start_index, 0] > self.abet_time_list.loc[index, 'Start_Time']:
+                while self.doric_pd.iloc[start_index, 0] > self.abet_time_list.loc[index, 'Start_Time'] and start_index > 0:
                     start_index -= 1
             except IndexError:
                 continue
 
             try:
-                while self.doric_pd.iloc[end_index, 0] < self.abet_time_list.loc[index, 'End_Time']:
+                while self.doric_pd.iloc[end_index, 0] < self.abet_time_list.loc[index, 'End_Time'] and end_index < len(doric_time_array) - 1:
                     end_index += 1
             except IndexError:
                 continue
@@ -1028,8 +1040,6 @@ def abet_extract_information(abet_file_path):
 def process_files(file_sheet_path, event_sheet_path, output_options, config):
     file_pair_df = pd.read_csv(file_sheet_path)    
     num_rows = len(file_pair_df)
-    num_cpus_75_percent = int(multiprocessing.cpu_count() * 0.75)
-    num_processes = min(num_cpus_75_percent, num_rows)
 
     event_window_prior = float(config['Event_Window']['event_prior'])
     event_window_follow = float(config['Event_Window']['event_follow'])
@@ -1051,51 +1061,51 @@ def process_files(file_sheet_path, event_sheet_path, output_options, config):
     exclusion_list = [item.strip() for item in config['Filter']['exclusion_list'].split(',')]
     
     results = []
-    with multiprocessing.Pool(processes=num_processes) as pool:
-        for _, row in file_pair_df.iterrows():
-            photometry_data = PhotometryData()
-            photometry_data.load_abet_data(row['abet_path'])
-            photometry_data.load_doric_data(row['doric_path'], row['ctrl_col_num'], row['act_col_num'], row['ttl_col_num'], row['mode'])
-            photometry_data.abet_doric_synchronize()
-            # Use the split filter and fit functions
-            time_data, filtered_f0, filtered_f = photometry_data.doric_filter(filter_cutoff)
-            photometry_data.doric_fit(filtered_f0, filtered_f, time_data)
-            
-            # Extract values from config object
-            photometry_data.abet_trial_definition(trial_start_stage, trial_end_stage)
+    # Sequential processing instead of multiprocessing
+    for _, row in file_pair_df.iterrows():
+        photometry_data = PhotometryData()
+        photometry_data.load_abet_data(row['abet_path'])
+        photometry_data.load_doric_data(row['doric_path'], row['ctrl_col_num'], row['act_col_num'], row['ttl_col_num'], row['mode'])
+        photometry_data.abet_doric_synchronize()
+        # Use the split filter and fit functions
+        time_data, filtered_f0, filtered_f = photometry_data.doric_filter(filter_cutoff)
+        photometry_data.doric_fit(fit_type, filtered_f0, filtered_f, time_data)
+        
+        # Extract values from config object
+        photometry_data.abet_trial_definition(trial_start_stage, trial_end_stage)
 
-            
-            event_sheet_df = pd.read_csv(event_sheet_path)
+        
+        event_sheet_df = pd.read_csv(event_sheet_path)
 
-            for _, event_row in event_sheet_df.iterrows():
-                photometry_data.abet_search_event(
-                    start_event_id=event_row['event_type'],
-                    start_event_item_name=event_row['event_name'],
-                    start_event_group=event_row['event_group'],
-                    extra_prior_time = event_window_prior,
-                    extra_follow_time = event_window_follow,
-                    exclusion_list = exclusion_list
-                )
-                photometry_data.trial_separator(trial_normalize=center_z,
-                                                trial_iti_pad=iti_prior_trial,
-                                                center_method=center_method)
+        for _, event_row in event_sheet_df.iterrows():
+            photometry_data.abet_search_event(
+                start_event_id=event_row['event_type'],
+                start_event_item_name=event_row['event_name'],
+                start_event_group=event_row['event_group'],
+                extra_prior_time = event_window_prior,
+                extra_follow_time = event_window_follow,
+                exclusion_list = exclusion_list
+            )
+            photometry_data.trial_separator(trial_normalize=center_z,
+                                            trial_iti_pad=iti_prior_trial,
+                                            center_method=center_method)
 
-                for output in output_options:
-                    if output <= 7:
-                        photometry_data.write_data(output)
-                    else:
-                        photometry_data.write_summary(output)
+            for output in output_options:
+                if output <= 7:
+                    photometry_data.write_data(output)
+                else:
+                    photometry_data.write_summary(output)
 
-                max_peak = photometry_data.calculate_max_peak()
-                auc = photometry_data.calculate_auc(-event_window_prior, event_window_follow)
+            max_peak = photometry_data.calculate_max_peak()
+            auc = photometry_data.calculate_auc(-event_window_prior, event_window_follow)
 
-                results.append({
-                    "file": os.path.basename(row['abet_path']),
-                    "behavior": event_row['event_name'],
-                    "max_peak": max_peak,
-                    "auc": auc,
-                    "plot_data": photometry_data.get_peri_event_data()
-                })
+            results.append({
+                "file": os.path.basename(row['abet_path']),
+                "behavior": event_row['event_name'],
+                "max_peak": max_peak,
+                "auc": auc,
+                "plot_data": photometry_data.get_peri_event_data()
+            })
 
     # Create a combined result for each behavior
     combined_results = {}
