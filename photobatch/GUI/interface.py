@@ -14,7 +14,6 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import numpy as np
 from Processing import data_processor
-import multiprocessing
 
 class MatplotlibCanvas(FigureCanvas):
     def __init__(self, parent=None, width=5, height=4, dpi=100):
@@ -904,7 +903,6 @@ class FiberPhotometryApp(QMainWindow):
         event.accept()
 
 if __name__ == '__main__':
-    multiprocessing.freeze_support()
     app = QApplication(sys.argv)
     main_win = FiberPhotometryApp()
     main_win.show()
