@@ -434,10 +434,14 @@ class FiberPhotometryApp(QMainWindow):
         self.event_prior_input = QLineEdit("2.0")
         self.event_follow_input = QLineEdit("5.0")
         
+        # Visualization mode selector
+        self.vis_mode_select = QComboBox()
+        self.vis_mode_select.addItems(["Histogram", "Heatmap"])
         controls_layout.addRow("Select File:", self.vis_file_select)
         controls_layout.addRow("Select Behavior:", self.vis_behavior_select)
         controls_layout.addRow("Event Prior (s):", self.event_prior_input)
         controls_layout.addRow("Event Follow (s):", self.event_follow_input)
+        controls_layout.addRow("Visualization Mode:", self.vis_mode_select)
         
         generate_plot_button = QPushButton("Generate Plot")
         generate_plot_button.clicked.connect(self.generate_plot)
@@ -503,6 +507,7 @@ class FiberPhotometryApp(QMainWindow):
         behavior = self.vis_behavior_select.currentText()
         event_prior = float(self.event_prior_input.text())
         event_follow = float(self.event_follow_input.text())
+        vis_mode = self.vis_mode_select.currentText().lower() if hasattr(self, 'vis_mode_select') else 'histogram'
 
         # Find the data in self.analysis_results that matches the file_path and behavior
         result_data = next((res for res in self.analysis_results if res['file'] == file_path and res['behavior'] == behavior), None)
@@ -515,17 +520,32 @@ class FiberPhotometryApp(QMainWindow):
             QMessageBox.warning(self, "Data Not Found", f"No data matches the selected file and behavior, or the data is empty.")
             return
 
-        self.canvas.axes.clear()
+        # Clear the canvas and re-add axes before plotting
+        self.canvas.figure.clf()
+        self.canvas.axes = self.canvas.figure.add_subplot(111)
         time_axis = np.linspace(-event_prior, event_follow, len(self.plot_data.index))
-        mean_data = self.plot_data.mean(axis=1)
-        sem_data = self.plot_data.sem(axis=1)
-        self.canvas.axes.plot(time_axis, mean_data, label='Mean')
-        self.canvas.axes.fill_between(time_axis, mean_data - sem_data, mean_data + sem_data, alpha=0.2, label='SEM')
-        self.canvas.axes.axvline(x=0, color='r', linestyle='--')
-        self.canvas.axes.set_xlabel("Time (s)")
-        self.canvas.axes.set_ylabel("Signal")
-        self.canvas.axes.set_title(f"Perievent Histogram for {behavior}")
-        self.canvas.axes.legend()
+
+        if vis_mode == 'histogram':
+            mean_data = self.plot_data.mean(axis=1)
+            sem_data = self.plot_data.sem(axis=1)
+            self.canvas.axes.plot(time_axis, mean_data, label='Mean')
+            self.canvas.axes.fill_between(time_axis, mean_data - sem_data, mean_data + sem_data, alpha=0.2, label='SEM')
+            self.canvas.axes.axvline(x=0, color='r', linestyle='--')
+            self.canvas.axes.set_xlabel("Time (s)")
+            self.canvas.axes.set_ylabel("Signal")
+            self.canvas.axes.set_title(f"Perievent Histogram for {behavior}")
+            self.canvas.axes.legend()
+        elif vis_mode == 'heatmap':
+            # Each event instance is a row, first event at the top
+            data = self.plot_data.T.values  # shape: (n_events, n_timepoints)
+            im = self.canvas.axes.imshow(data, aspect='auto', cmap='viridis',
+                                         extent=[-event_prior, event_follow, data.shape[0], 0])
+            self.canvas.axes.axvline(x=0, color='r', linestyle='--')
+            self.canvas.axes.set_xlabel("Time (s)")
+            self.canvas.axes.set_ylabel("Event Instance")
+            self.canvas.axes.set_title(f"Perievent Heatmap for {behavior}")
+            cbar = self.canvas.figure.colorbar(im, ax=self.canvas.axes)
+            cbar.set_label("Signal")
         self.canvas.draw()
 
     def save_plot_data(self):
