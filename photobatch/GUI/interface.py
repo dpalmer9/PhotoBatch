@@ -572,7 +572,22 @@ class FiberPhotometryApp(QMainWindow):
                 continue
             group_box = QGroupBox(section.replace("_", " "))
             group_layout = QFormLayout()
+            fit_type_combo = None
+            arpls_widgets = []
+            # First pass: create fit_type combo if present
             for key in self.config[section]:
+                if key == 'fit_type':
+                    value = self.config[section][key]
+                    display_key = key.replace("_", " ")
+                    fit_type_combo = QComboBox()
+                    fit_type_combo.addItems(['linear', 'expodecay', 'arpls'])
+                    fit_type_combo.setCurrentText(value)
+                    group_layout.addRow(display_key, fit_type_combo)
+                    setattr(self, f"{section}_fit_type_combobox", fit_type_combo)
+            # Second pass: all other keys
+            for key in self.config[section]:
+                if key == 'fit_type':
+                    continue
                 value = self.config[section][key]
                 display_key = key.replace("_", " ")
                 widget_attr_base = f"{section}_{key}"
@@ -721,10 +736,28 @@ class FiberPhotometryApp(QMainWindow):
                     if filter_type_combo:
                         filter_type_combo.currentTextChanged.connect(lambda _: update_cheby_visibility())
                     update_cheby_visibility()
+                # ARPLS options: only show if fit_type is 'arpls'
+                elif key.startswith('arpls_'):
+                    arpls_widget = QLineEdit(value)
+                    setattr(self, f"{widget_attr_base}_line_edit", arpls_widget)
+                    label = QLabel(display_key)
+                    group_layout.addRow(label, arpls_widget)
+                    arpls_widgets.append((label, arpls_widget))
                 else:
                     line_edit = QLineEdit(value)
                     setattr(self, f"{widget_attr_base}_line_edit", line_edit)
                     group_layout.addRow(display_key, line_edit)
+            # If fit_type_combo and arpls_widgets exist, connect visibility
+            if fit_type_combo and arpls_widgets:
+                def update_arpls_visibility():
+                    if fit_type_combo is not None:
+                        is_arpls = fit_type_combo.currentText() == 'arpls'
+                        for label, widget in arpls_widgets:
+                            label.setVisible(is_arpls)
+                            widget.setVisible(is_arpls)
+                if fit_type_combo is not None:
+                    fit_type_combo.currentTextChanged.connect(lambda _: update_arpls_visibility())
+                    update_arpls_visibility()
             group_box.setLayout(group_layout)
             content_layout.addWidget(group_box)
         save_button = QPushButton("Save Changes")
