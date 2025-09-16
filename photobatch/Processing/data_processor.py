@@ -354,7 +354,8 @@ class PhotometryData:
             if filter_type in condition_event_names:
                 filter_event_abet = abet_data.loc[(abet_data[self.event_name_col] == str(filter_type)) & (
                             abet_data['Group_ID'] == str(int(filter_group))), :]
-                filter_event_abet = filter_event_bet[~filter_event_abet.isin(exclusion_list)]
+                # remove any rows that are in the exclusion list
+                filter_event_abet = filter_event_abet[~filter_event_abet.isin(exclusion_list)]
                 filter_event_abet = filter_event_abet.dropna(subset=['Item_Name'])
                 for index, value in event_data.items():
                     sub_values = filter_event_abet.loc[:, self.time_var_name]
@@ -745,9 +746,7 @@ class PhotometryData:
         trial_num = 1
 
         self.abet_time_list = self.abet_event_times
-
-        length_time = self.abet_time_list.iloc[0, 1] - self.abet_time_list.iloc[0, 0]
-        measurements_per_interval = length_time * self.sample_frequency
+        # doric_time_series not used further; keep doric_time_array and delta arrays for slicing
         doric_time_series = self.doric_pd[['Time']]
 
         zscore_trials = []
@@ -768,23 +767,31 @@ class PhotometryData:
 
         for index, row in self.abet_time_list.iterrows():
             try:
-                start_time = row['Start_Time']
+                start_time = float(row['Start_Time'])
                 start_index = np.searchsorted(doric_time_array, start_time, side='left')
                 if start_index >= len(doric_time_array):
                     print('Trial Start Out of Bounds, Skipping Event')
                     continue
-            except IndexError:
-                print('Trial Start Out of Bounds, Skipping Event')
+            except (IndexError, ValueError, TypeError):
+                print('Trial Start Out of Bounds or invalid, Skipping Event')
                 continue
             try:
-                end_time = row['End_Time']
+                end_time = float(row['End_Time'])
                 end_index = np.searchsorted(doric_time_array, end_time, side='right') - 1
                 if end_index < 0 or end_index >= len(doric_time_array):
                     print('Trial End Out of Bounds, Skipping Event')
                     continue
-            except IndexError:
-                print('Trial End Out of Bounds, Skipping Event')
+            except (IndexError, ValueError, TypeError):
+                print('Trial End Out of Bounds or invalid, Skipping Event')
                 continue
+
+            # Compute the expected number of measurements for this trial from its duration
+            try:
+                length_time = end_time - start_time
+                measurements_per_interval = max(1, int(round(length_time * self.sample_frequency)))
+            except Exception:
+                # Fallback to at least a single measurement
+                measurements_per_interval = 1
 
             try:
                 while doric_time_array[start_index] > self.abet_time_list.loc[index, 'Start_Time'] and start_index > 0:
@@ -798,14 +805,20 @@ class PhotometryData:
             except IndexError:
                 continue
 
-            while (end_index - start_index + 1) < measurements_per_interval:
+            # Ensure the slice has the expected number of samples (measurements_per_interval)
+            while (end_index - start_index + 1) < measurements_per_interval and end_index < len(doric_time_array) - 1:
                 end_index += 1
-            while (end_index - start_index + 1) > measurements_per_interval:
+            while (end_index - start_index + 1) > measurements_per_interval and end_index > start_index:
                 end_index -= 1
 
-            # Slice numpy arrays for this trial
-            trial_time = doric_time_array[start_index:end_index]
-            trial_deltaf = doric_deltaf_array[start_index:end_index]
+            # Prevent inverted indices; ensure at least one sample is selected
+            if end_index < start_index:
+                end_index = start_index
+
+            # Slice numpy arrays for this trial (include end_index)
+            end_slice = min(end_index + 1, len(doric_time_array))
+            trial_time = doric_time_array[start_index:end_slice]
+            trial_deltaf = doric_deltaf_array[start_index:end_slice]
 
             # Compute z-score normalization as before
             if trial_normalize == 'iti':
@@ -945,6 +958,7 @@ class PhotometryData:
 
         z_list = [6,'SummaryZ','summaryz']
         f_list = [7,'SummaryF', 'summaryf']
+        p_list = [8,'SummaryP','summaryp']
 
         output_string_list = ['SummaryZ','SummaryF','SummaryP']
 
@@ -1096,12 +1110,33 @@ def process_files(file_sheet_path, event_sheet_path, output_options, config):
             max_peak = photometry_data.calculate_max_peak()
             auc = photometry_data.calculate_auc(-event_window_prior, event_window_follow)
 
+            plot_df = photometry_data.get_peri_event_data()
+            # Make defensive copy so later operations don't mutate stored result
+            try:
+                plot_df_copy = plot_df.copy(deep=True)
+            except Exception:
+                plot_df_copy = pd.DataFrame(plot_df)
+
+            # Debug: print shape to help trace empty outputs
+            try:
+                print(f"Processed file={row['abet_path']} behavior={event_row['event_name']} plot_shape={plot_df_copy.shape}")
+            except Exception:
+                print("Processed one result (unable to format debug info)")
+
+            # Add animal id and date extracted from the ABET file for downstream labeling
+            try:
+                animal_id, date, _ = abet_extract_information(row['abet_path'])
+            except Exception:
+                animal_id, date = None, None
+
             results.append({
                 "file": os.path.basename(row['abet_path']),
                 "behavior": event_row['event_name'],
                 "max_peak": max_peak,
                 "auc": auc,
-                "plot_data": photometry_data.get_peri_event_data()
+                "plot_data": plot_df_copy,
+                "animal_id": animal_id,
+                "date": date
             })
 
     # Create a combined result for each behavior

@@ -388,7 +388,8 @@ class FiberPhotometryApp(QMainWindow):
         QMessageBox.information(self, "Analysis", "Analysis complete!")
 
     def update_results_and_visualization_options(self):
-        self.update_vis_file_select()
+        # Refresh animal/date selectors and results table
+        self.update_animal_date_selects()
         self.update_results_table()
 
     def init_results_tab(self):
@@ -396,9 +397,13 @@ class FiberPhotometryApp(QMainWindow):
         layout.addWidget(QLabel("Analysis Results"))
 
         controls_layout = QFormLayout()
-        self.results_file_select = QComboBox()
-        self.results_file_select.currentTextChanged.connect(self.update_results_table)
-        controls_layout.addRow("Select File:", self.results_file_select)
+        # Replace single file selector with Animal ID and Date selectors
+        self.results_animal_select = QComboBox()
+        self.results_animal_select.currentTextChanged.connect(self.update_results_date_select)
+        self.results_date_select = QComboBox()
+        self.results_date_select.currentTextChanged.connect(self.update_results_table)
+        controls_layout.addRow("Select Animal ID:", self.results_animal_select)
+        controls_layout.addRow("Select Date:", self.results_date_select)
         layout.addLayout(controls_layout)
 
         self.results_table = QTableWidget()
@@ -426,10 +431,14 @@ class FiberPhotometryApp(QMainWindow):
         layout = QVBoxLayout()
         
         controls_layout = QFormLayout()
-        self.vis_file_select = QComboBox()
-        self.update_vis_file_select()
+        # Visualization: choose by Animal ID and Date instead of file
+        self.vis_animal_select = QComboBox()
+        self.vis_date_select = QComboBox()
+        # populate selects from any existing results
+        self.update_animal_date_selects()
         self.vis_behavior_select = QComboBox()
-        self.vis_file_select.currentTextChanged.connect(self.update_vis_behavior_select)
+        self.vis_animal_select.currentTextChanged.connect(self.update_vis_date_select)
+        self.vis_date_select.currentTextChanged.connect(self.update_vis_behavior_select)
         
         self.event_prior_input = QLineEdit("2.0")
         self.event_follow_input = QLineEdit("5.0")
@@ -437,7 +446,8 @@ class FiberPhotometryApp(QMainWindow):
         # Visualization mode selector
         self.vis_mode_select = QComboBox()
         self.vis_mode_select.addItems(["Histogram", "Heatmap"])
-        controls_layout.addRow("Select File:", self.vis_file_select)
+        controls_layout.addRow("Select Animal ID:", self.vis_animal_select)
+        controls_layout.addRow("Select Date:", self.vis_date_select)
         controls_layout.addRow("Select Behavior:", self.vis_behavior_select)
         controls_layout.addRow("Event Prior (s):", self.event_prior_input)
         controls_layout.addRow("Event Follow (s):", self.event_follow_input)
@@ -463,16 +473,111 @@ class FiberPhotometryApp(QMainWindow):
         layout.addLayout(save_layout)
         self.visualization_tab.setLayout(layout)
 
+    def update_animal_date_selects(self):
+        """Populate animal and date dropdowns for both Results and Visualization tabs based on analysis_results.
+        If a combined (no animal_id) result exists, include the 'Combined' option for animals.
+        """
+        # Build animals and dates mapping
+        animals = set()
+        dates_by_animal = {}
+        combined_exists = False
+        for res in (self.analysis_results or []):
+            a = res.get('animal_id')
+            d = res.get('date')
+            if not a:
+                combined_exists = True
+                continue
+            animals.add(a)
+            dates_by_animal.setdefault(a, set()).add(d)
+
+        animals = sorted(animals)
+
+        # Update Results selectors if present
+        if hasattr(self, 'results_animal_select') and hasattr(self, 'results_date_select'):
+            self.results_animal_select.blockSignals(True)
+            self.results_date_select.blockSignals(True)
+            self.results_animal_select.clear()
+            # Insert Combined at top if exists
+            if combined_exists:
+                self.results_animal_select.addItem('Combined')
+            for a in animals:
+                self.results_animal_select.addItem(a)
+            # Default date list empty
+            self.results_date_select.clear()
+            self.results_animal_select.blockSignals(False)
+            self.results_date_select.blockSignals(False)
+
+        # Update Visualization selectors if present
+        if hasattr(self, 'vis_animal_select') and hasattr(self, 'vis_date_select'):
+            self.vis_animal_select.blockSignals(True)
+            self.vis_date_select.blockSignals(True)
+            self.vis_animal_select.clear()
+            if combined_exists:
+                self.vis_animal_select.addItem('Combined')
+            for a in animals:
+                self.vis_animal_select.addItem(a)
+            self.vis_date_select.clear()
+            self.vis_animal_select.blockSignals(False)
+            self.vis_date_select.blockSignals(False)
+
+    def update_vis_date_select(self, animal):
+        """Populate the visualization date select when the animal selection changes."""
+        self.vis_date_select.clear()
+        if not animal or not self.analysis_results:
+            return
+        if animal == 'Combined':
+            self.vis_date_select.addItem('Combined')
+            # Trigger behavior refresh
+            self.update_vis_behavior_select()
+            return
+        # collect dates for this animal
+        dates = sorted({res.get('date') for res in self.analysis_results if res.get('animal_id') == animal and res.get('date')})
+        # allow viewing all dates for the animal
+        self.vis_date_select.addItem('All')
+        for d in dates:
+            self.vis_date_select.addItem(d)
+        self.update_vis_behavior_select()
+
+    def update_results_date_select(self, animal):
+        """Populate the results date select when the results animal selection changes."""
+        self.results_date_select.clear()
+        if not animal or not self.analysis_results:
+            return
+        if animal == 'Combined':
+            self.results_date_select.addItem('Combined')
+            self.update_results_table()
+            return
+        dates = sorted({res.get('date') for res in self.analysis_results if res.get('animal_id') == animal and res.get('date')})
+        self.results_date_select.addItem('All')
+        for d in dates:
+            self.results_date_select.addItem(d)
+        self.update_results_table()
+
     def update_results_table(self):
-        selected_file = self.results_file_select.currentText()
-        if not selected_file or not self.analysis_results:
+        selected_animal = self.results_animal_select.currentText() if hasattr(self, 'results_animal_select') else ''
+        selected_date = self.results_date_select.currentText() if hasattr(self, 'results_date_select') else ''
+        if not selected_animal or not self.analysis_results:
             self.results_table.clear()
             self.results_table.setRowCount(0)
             self.results_table.setColumnCount(0)
             return
 
-        # Filter results for the selected file
-        filtered_results = [res for res in self.analysis_results if res['file'] == selected_file]
+        # Filter results for the selected animal and date
+        def matches_selection(res):
+            # Combined entries in analysis_results are the ones missing an animal_id
+            res_animal = res.get('animal_id')
+            res_date = res.get('date')
+            if selected_animal == 'Combined':
+                if res_animal:
+                    return False
+            else:
+                if res_animal != selected_animal:
+                    return False
+            if selected_date and selected_date not in ['Combined', 'All']:
+                return res_date == selected_date
+            return True
+
+        filtered_results = [res for res in self.analysis_results if matches_selection(res)]
 
         self.results_table.setRowCount(len(filtered_results))
         self.results_table.setColumnCount(3) # Behavior, Max Peak, AUC
@@ -484,33 +589,55 @@ class FiberPhotometryApp(QMainWindow):
         self.results_table.resizeColumnsToContents()
 
     def update_vis_file_select(self):
-        self.vis_file_select.clear()
-        self.results_file_select.clear()
-        if not self.analysis_results:
-            return
-
-        files = sorted(list(set([res['file'] for res in self.analysis_results])))
-        self.vis_file_select.addItems(files)
-        self.results_file_select.addItems(files)
+        # legacy helper left for compatibility; delegate to animal/date selector updater
+        self.update_animal_date_selects()
 
     def update_vis_behavior_select(self):
         self.vis_behavior_select.clear()
-        selected_file = self.vis_file_select.currentText()
-        if not selected_file or not self.analysis_results:
+        selected_animal = self.vis_animal_select.currentText() if hasattr(self, 'vis_animal_select') else ''
+        selected_date = self.vis_date_select.currentText() if hasattr(self, 'vis_date_select') else ''
+        if not selected_animal or not self.analysis_results:
             return
 
-        behaviors = sorted(list(set([res['behavior'] for res in self.analysis_results if res['file'] == selected_file])))
+        def matches(res):
+            a = res.get('animal_id')
+            d = res.get('date')
+            if selected_animal == 'Combined':
+                if a:
+                    return False
+            else:
+                if a != selected_animal:
+                    return False
+            if selected_date and selected_date not in ['All', 'Combined']:
+                return d == selected_date
+            return True
+
+        behaviors = sorted(list(set([res['behavior'] for res in self.analysis_results if matches(res)])))
         self.vis_behavior_select.addItems(behaviors)
 
     def generate_plot(self):
-        file_path = self.vis_file_select.currentText()
+        selected_animal = self.vis_animal_select.currentText() if hasattr(self, 'vis_animal_select') else ''
+        selected_date = self.vis_date_select.currentText() if hasattr(self, 'vis_date_select') else ''
         behavior = self.vis_behavior_select.currentText()
         event_prior = float(self.event_prior_input.text())
         event_follow = float(self.event_follow_input.text())
         vis_mode = self.vis_mode_select.currentText().lower() if hasattr(self, 'vis_mode_select') else 'histogram'
 
-        # Find the data in self.analysis_results that matches the file_path and behavior
-        result_data = next((res for res in self.analysis_results if res['file'] == file_path and res['behavior'] == behavior), None)
+        # Find the data in self.analysis_results that matches the selected animal/date and behavior
+        def matches(res):
+            a = res.get('animal_id')
+            d = res.get('date')
+            if selected_animal == 'Combined':
+                if a:
+                    return False
+            else:
+                if a != selected_animal:
+                    return False
+            if selected_date and selected_date not in ['All', 'Combined']:
+                return d == selected_date
+            return res.get('behavior') == behavior
+
+        result_data = next((res for res in self.analysis_results if matches(res) and res.get('behavior') == behavior), None)
 
         if result_data and not result_data['plot_data'].empty:
             self.plot_data = result_data['plot_data']
@@ -817,19 +944,8 @@ class FiberPhotometryApp(QMainWindow):
             self.update_options_with_template()
 
     def save_config_changes_to_current_file(self):
-        for section in self.config.sections():
-            for key in self.config[section]:
-                widget_attr_base = f"{section}_{key}"
-                widget = getattr(self, f"{widget_attr_base}_line_edit", None) or \
-                         getattr(self, f"{widget_attr_base}_checkbox", None) or \
-                         getattr(self, f"{widget_attr_base}_multicombobox_edit", None)
-                if isinstance(widget, QLineEdit):
-                    self.config[section][key] = widget.text()
-                elif isinstance(widget, QCheckBox):
-                    self.config[section][key] = 'true' if widget.isChecked() else 'false'
-                elif isinstance(widget, MultiSelectComboBox):
-                    checked_items = widget.get_checked_items()
-                    self.config[section][key] = ",".join(checked_items)
+        # Sync UI widgets into the in-memory config, then write to file
+        self.update_config_from_ui()
         try:
             with open(self.config_file_path, 'w', encoding='utf-8') as configfile:
                 self.config.write(configfile)
@@ -844,6 +960,59 @@ class FiberPhotometryApp(QMainWindow):
             QMessageBox.information(self, "Saved", f"Configuration changes saved successfully to {self.config_file_path}.")
         except IOError as e:
             QMessageBox.critical(self, "Save Error", f"Failed to save configuration to {self.config_file_path}: {e}")
+
+    def update_config_from_ui(self):
+        """Read widgets created in the Options tab and write their values into self.config (in-memory).
+        This centralizes UI->config mapping so callers can update before writing to disk.
+        """
+        for section in self.config.sections():
+            for key in self.config[section]:
+                widget_attr_base = f"{section}_{key}"
+                # try common widget suffixes used in the options creation
+                widget = getattr(self, f"{widget_attr_base}_line_edit", None) or \
+                         getattr(self, f"{widget_attr_base}_checkbox", None) or \
+                         getattr(self, f"{widget_attr_base}_multicombobox_edit", None) or \
+                         getattr(self, f"{widget_attr_base}_combobox", None) or \
+                         getattr(self, f"{widget_attr_base}_spin_box", None) or \
+                         getattr(self, f"{widget_attr_base}_double_spin_box", None)
+                # Map widget types back to string values for config
+                if widget is None:
+                    continue
+                try:
+                    # QLineEdit
+                    if isinstance(widget, QLineEdit):
+                        self.config[section][key] = widget.text()
+                    # QCheckBox
+                    elif isinstance(widget, QCheckBox):
+                        self.config[section][key] = 'true' if widget.isChecked() else 'false'
+                    # MultiSelectComboBox
+                    elif isinstance(widget, MultiSelectComboBox):
+                        checked_items = widget.get_checked_items()
+                        self.config[section][key] = ",".join(checked_items)
+                    # QComboBox
+                    elif isinstance(widget, QComboBox):
+                        self.config[section][key] = widget.currentText()
+                    # QSpinBox (including the integer spinboxes used for various numeric options)
+                    elif isinstance(widget, QSpinBox):
+                        self.config[section][key] = str(widget.value())
+                    else:
+                        # Fallback: try to get a sensible string value
+                        val = None
+                        if hasattr(widget, 'text'):
+                            try:
+                                val = widget.text()
+                            except Exception:
+                                pass
+                        if val is None and hasattr(widget, 'currentText'):
+                            try:
+                                val = widget.currentText()
+                            except Exception:
+                                pass
+                        if val is not None:
+                            self.config[section][key] = str(val)
+                except Exception:
+                    # If a single widget fails to serialize, skip it but don't abort the whole update
+                    continue
 
     def load_configuration_file(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Load Configuration File", "", "INI Files (*.ini)")
@@ -926,10 +1095,16 @@ class FiberPhotometryApp(QMainWindow):
     def closeEvent(self, event):
         """Prompt to save config if it has changed since it was loaded/snapshotted."""
         try:
-            current_text = self._get_config_text() if hasattr(self, '_original_config_text') else None
+            # First ensure UI values are reflected in the in-memory config
+            try:
+                self.update_config_from_ui()
+            except Exception:
+                # If updating from UI fails, fall back to comparing current parser state
+                pass
+
+            current_text = self._get_config_text() if hasattr(self, '_get_config_text') else None
             original_text = self._original_config_text if hasattr(self, '_original_config_text') else None
             if original_text is None:
-                # If we don't have a snapshot, still compare against current text; if non-empty, prompt
                 changed = bool(current_text and current_text.strip())
             else:
                 changed = (current_text != original_text)
@@ -937,22 +1112,28 @@ class FiberPhotometryApp(QMainWindow):
             changed = False
 
         if changed:
-            reply = QMessageBox.question(self, "Save Configuration?",
-                                         "Configuration has changed. Do you want to save changes to the configuration file?",
-                                         QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
-                                         QMessageBox.Yes)
-            if reply == QMessageBox.Yes:
-                # Save and allow close
+            # Auto-save changes without prompting, but allow cancel if save fails
+            try:
+                with open(self.config_file_path, 'w', encoding='utf-8') as configfile:
+                    self.config.write(configfile)
+                # Update snapshot so subsequent checks are accurate
                 try:
-                    self.save_config_changes_to_current_file()
-                except Exception as e:
-                    QMessageBox.critical(self, "Save Error", f"Failed to save configuration: {e}")
+                    import io
+                    buf = io.StringIO()
+                    self.config.write(buf)
+                    self._original_config_text = buf.getvalue()
+                except Exception:
+                    self._original_config_text = None
+            except Exception as e:
+                # If saving fails, give the user a chance to cancel close
+                reply = QMessageBox.question(self, "Save Failed",
+                                             f"Failed to save configuration to {self.config_file_path}: {e}\nDo you want to cancel closing and try to save manually?",
+                                             QMessageBox.Yes | QMessageBox.No,
+                                             QMessageBox.Yes)
+                if reply == QMessageBox.Yes:
                     event.ignore()
                     return
-            elif reply == QMessageBox.Cancel:
-                event.ignore()
-                return
-            # If No was chosen, just proceed to close without saving
+                # If user chooses No, proceed to close without saved changes
         event.accept()
 
 if __name__ == '__main__':
