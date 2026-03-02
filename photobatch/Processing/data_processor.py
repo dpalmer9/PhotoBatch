@@ -11,9 +11,7 @@ from scipy.sparse.linalg import spsolve
 import numpy as np
 import pandas as pd
 import h5py
-from sklearn.linear_model import LinearRegression
-
-pd.set_option('mode.chained_assignment', None)
+from sklearn.linear_model import LinearRegression, HuberRegressor
 
 
 # Classes
@@ -70,7 +68,7 @@ class PhotometryData:
         # Initialize List Variables
 
         self.abet_time_list = []
-        self.anymaze_event_times = []
+        self.anymaze_e
 
         # Initialize Data Objects (Tables, Series, etc)
 
@@ -90,14 +88,14 @@ class PhotometryData:
         self.abet_event_times = pd.DataFrame()
         self.trial_definition_times = pd.DataFrame()
 
-    """ load_abet_data - Loads in the ABET unprocessed data to the PhotometryData object. Also
-    extracts the animal ID and date. csv reader import necessary due to unusual structure of
-    ABET II/ABET Cognition data structures. Once the standard data table is detected, a curated
-    subset of columns is collected . Output is moved to pandas dataframe.
-     Arguments:
-     filepath = The filepath for the ABET unprocessed csv. Generated from GUI path """
-
     def load_abet_data(self, filepath):
+        """ load_abet_data - Loads in the ABET unprocessed data to the PhotometryData object. Also
+        extracts the animal ID and date. csv reader import necessary due to unusual structure of
+        ABET II/ABET Cognition data structures. Once the standard data table is detected, a curated
+        subset of columns is collected . Output is moved to pandas dataframe.
+        Arguments:
+        filepath = The filepath for the ABET unprocessed csv. Generated from GUI path """
+
         self.abet_file_path = filepath
         self.abet_loaded = True
         abet_file = open(self.abet_file_path)
@@ -139,7 +137,9 @@ class PhotometryData:
         elif '.doric' in filepath:
             self.load_doric_data_h5(filepath, ch1_col, ch2_col, ttl_col, mode)
 
-    """ load_doric_data - Loads in the doric data to the PhotometryData object. This method uses a
+
+    def load_doric_data_csv(self, filepath, ch1_col, ch2_col, ttl_col, mode=''):
+        """ load_doric_data - Loads in the doric data to the PhotometryData object. This method uses a
             simple pandas read csv function to import the data. User specified column indexes are used to grab only
             the relevant columns.
              Arguments:
@@ -150,8 +150,6 @@ class PhotometryData:
              mode = Specifies the mode of data definition. col_index indicates that the python column indexes are used. col_name indicates
              the name of the data column is used. input_output_no indicates that two numbers separated by comma are indicating the analog input
              and output from the lockin method (single number to denote non-lockin for ttl)"""
-
-    def load_doric_data_csv(self, filepath, ch1_col, ch2_col, ttl_col, mode=''):
         self.doric_file_path = filepath
 
         doric_colnames = ['Time', 'Control', 'Active']
@@ -272,7 +270,8 @@ class PhotometryData:
 
         return
 
-    """ abet_trial_definition - Defines a trial structure for the components of the ABET II unprocessed data.
+    def abet_trial_definition(self, start_event_group, end_event_group):
+        """ abet_trial_definition - Defines a trial structure for the components of the ABET II unprocessed data.
         This method uses the Item names of Condition Events that represent the normal start and end of a trial epoch.
         This method was expanded in PhotometryBatch to allow for multiple start and end groups.
         Arguments:
@@ -281,8 +280,6 @@ class PhotometryData:
         Photometry Analyzer currently only supports start group definitions.
         Photometry Batch supports multiple start and end group definitions
         MousePAD will eventually support all definitions as well as sessions with no definition"""
-
-    def abet_trial_definition(self, start_event_group, end_event_group):
         if not self.abet_loaded:
             return None
 
@@ -320,7 +317,12 @@ class PhotometryData:
         self.trial_definition_times.columns = ['Start_Time', 'End_Time']
         self.trial_definition_times = self.trial_definition_times.reset_index(drop=True)
 
-    """ abet_search_event - This function searches through the ABET unprocessed data 
+
+    def abet_search_event(self, start_event_id='1', start_event_group='', start_event_item_name='',
+                          start_event_position=None,
+                          filter_event=False, filter_list=None, extra_prior_time=0, extra_follow_time=0,
+                          exclusion_list=None):
+        """ abet_search_event - This function searches through the ABET unprocessed data 
         for events specified in the ABET GUI. These events can be Condition Events, Variable Events,
         Touch Up/Down Events, Input Transition On/Off Events. This function can filter primary
         events with an unlimited number of filters. The output of this function is a pandas dataframe with the
@@ -337,11 +339,6 @@ class PhotometryData:
         extra_prior_time = A float value denoting the amount of time prior to the main event to pad it by
         extra_follow_time = A float value denoting the amount of time following the maine vent to pad it by
         """
-
-    def abet_search_event(self, start_event_id='1', start_event_group='', start_event_item_name='',
-                          start_event_position=None,
-                          filter_event=False, filter_list=None, extra_prior_time=0, extra_follow_time=0,
-                          exclusion_list=None):
 
         if filter_list is None:
             filter_list = []
@@ -477,11 +474,10 @@ class PhotometryData:
         self.extra_follow = extra_follow_time
         self.extra_prior = extra_prior_time
 
-    """ abet_doric_synchronize - This function searches for TTL timestamps in the ABET II raw data and
+    def abet_doric_synchronize(self):
+        """ abet_doric_synchronize - This function searches for TTL timestamps in the ABET II raw data and
         relates it to TTL pulses detected in the photometer. The adjusted sync value is calculated and the 
         doric photometry data time is adjusted to be in reference to the ABET II file."""
-
-    def abet_doric_synchronize(self):
         if not self.abet_loaded:
             return None
         if not self.doric_loaded:
@@ -539,14 +535,28 @@ class PhotometryData:
         self.doric_pandas['Time'] = (self.doric_pandas['Time'] * ttl_model.coef_[0]) + ttl_model.intercept_
         print(self.doric_pandas['Time'].head(20))
 
-    """doric_process - This function calculates the delta-f value based on the isobestic and active channel data.
-        The two channels are first put through a 2nd order low-pass butterworth filter with a user-specified cutoff. 
-        Following filtering, the data is fit with least squares regression to a linear function. Finally, the fitted
-        data is used to calculate a delta-F value. A pandas dataframe with the time and delta-f values is created.
+    def doric_crop(self, start_time_remove=0, end_time_remove=0):
+        """ doric_crop - This function crops the doric data to remove unwanted time at the start and end of the recording. 
+        This is done after synchronization to ensure correct time reference.
         Arguments:
-        filter_frequency = The cut-off frequency used for the low-pass filter"""
+        start_time_remove: float, optional
+            Time in seconds to remove from the start of the recording.
+        end_time_remove: float, optional
+            Time in seconds to remove from the end of the recording.
+        """
+        if not self.doric_loaded:
+            return None
+        # Crop the doric data to remove unwanted time at the start and end of the recording. This is done after synchronization to ensure correct time reference.
+        doric_pandas_cut = self.doric_pandas[self.doric_pandas['Time'] >= 0]
+        if start_time_remove > 0:
+            doric_pandas_cut = doric_pandas_cut[doric_pandas_cut['Time'] >= start_time_remove]
+        if end_time_remove > 0:
+            max_time = doric_pandas_cut['Time'].max()
+            doric_pandas_cut = doric_pandas_cut[doric_pandas_cut['Time'] <= (max_time - end_time_remove)]
+        self.doric_pandas = doric_pandas_cut.reset_index(drop=True)
 
-    def doric_filter(self, filter_type='lowpass', filter_name='butterworth', filter_order=4, filter_cutoff=6):
+    def doric_filter(self, filter_type='lowpass', filter_name='butterworth', filter_order=4, filter_cutoff=6,
+                     fs_method='median'):
         # Prepare data and apply selected filter (returns time and filtered signals)
         doric_pandas_cut = self.doric_pandas[self.doric_pandas['Time'] >= 0]
 
@@ -559,7 +569,13 @@ class PhotometryData:
         f_data = f_data.astype(float)
 
         # compute sample frequency (Hz)
-        self.sample_frequency = len(time_data) / (time_data[(len(time_data) - 1)] - time_data[0])
+        if fs_method == 'median':
+            # Calculate time diff between consecutive points and take median to estimate sampling interval
+            time_diffs = np.diff(time_data)
+            self.sample_frequency = 1.0 / np.median(time_diffs)
+        else:
+            # Use first and last point to approximate - good for uniform sampling but can be skewed by outliers
+            self.sample_frequency = len(time_data) / (time_data[(len(time_data) - 1)] - time_data[0])
 
         # Default: no filtering applied if parameters are invalid
         filtered_f0 = f0_data.copy()
@@ -616,7 +632,18 @@ class PhotometryData:
         return time_data, filtered_f0, filtered_f
 
 
-    def doric_fit(self, fit_type, filtered_f0, filtered_f, time_data=None):
+    def doric_fit(self, fit_type, filtered_f0, filtered_f, time_data=None, robust_fit=True):
+        """ doric_fit - This function fits the filtered photometry signals to compute delta-F/F. 
+        The fit can be linear regression, exponential decay, or arPLS baseline fitting. 
+        The fitted baseline is used to compute delta-F/F for the active channel.
+        Arguments:
+        fit_type: str The type of fit to apply. Options include 'linear', 'expodecay', 'arpls'.
+        filtered_f0: np.array The filtered isobestic channel data.
+        filtered_f: np.array The filtered active channel data. 
+        time_data: np.array The time data corresponding to the filtered signals. If None, it will be extracted from self.doric_pandas.
+        robust_fit: bool Whether to use a robust fitting method (HuberRegressor) for linear fits.
+        """
+        
         # Fit filtered signals, compute delta-F and populate self.doric_pd
         fit_type_lower = str(fit_type).lower() if fit_type is not None else 'linear'
 
@@ -626,8 +653,19 @@ class PhotometryData:
 
         # Linear fit: regress active on isobestic
         if fit_type_lower in ('linear', 'lin'):
-            filtered_poly = np.polyfit(filtered_f0, filtered_f, 1)
-            fitted = np.multiply(filtered_poly[0], filtered_f0) + filtered_poly[1]
+            if robust_fit:
+                # Reshape 1D Arrays to 2D for Scikit-learn
+                f0_reshapped = filtered_f0.reshape(-1, 1)
+
+                # epsilon control threshold where loss switches from squared to absolute
+                epsilon_val = 1.35
+                # Fit a HuberRegressor which is more robust to outlying values
+                huber = HuberRegressor(epsilon=epsilon_val)
+                huber.fit(f0_reshapped, filtered_f)
+                fitted = huber.predict(f0_reshapped)
+            else:
+                filtered_poly = np.polyfit(filtered_f0, filtered_f, 1)
+                fitted = np.multiply(filtered_poly[0], filtered_f0) + filtered_poly[1]
 
         elif fit_type_lower in ('expodecay', 'exp_decay', 'exp'):
             # Fit an exponential decay to the active signal over time: y = A * exp(-k*t) + C
@@ -717,6 +755,40 @@ class PhotometryData:
         self.doric_pd['DeltaF'] = delta_f
         self.doric_pd = self.doric_pd.rename(columns={0: 'Time', 1: 'DeltaF'})
 
+    def extract_trial_data(self, doric_time_array, doric_deltaf_array, start_time, end_time, expected_samples=None):
+        """
+        Helper method to replace the while loop logic in trial_separator.
+        Extracts data strictly within time bounds.
+        Arguments:
+        doric_time_array: np.array of time points from doric_pd
+        doric_deltaf_array: np.array of delta-F values from doric_pd
+        start_time: float, start time of the trial
+        end_time: float, end time of the trial
+        expected_samples: int, optional, expected number of samples in the trial
+        """
+        # 1. Fast boundary lookup using binary search
+        start_index = np.searchsorted(doric_time_array, start_time, side='left')
+        end_index = np.searchsorted(doric_time_array, end_time, side='right')
+
+        # 2. Safety bounds check
+        if start_index >= len(doric_time_array) or end_index <= 0 or start_index >= end_index:
+            return np.array([]), np.array([])
+
+        # 3. Slice the actual data
+        trial_time = doric_time_array[start_index:end_index]
+        trial_deltaf = doric_deltaf_array[start_index:end_index]
+
+        # 4. Enforce uniform array lengths via interpolation (No while loops)
+        if expected_samples is not None and len(trial_time) != expected_samples:
+            # Generate a perfect linear time grid for the exact window
+            target_time = np.linspace(start_time, end_time, expected_samples)
+            
+            # Interpolate the delta_f values to match the target time grid
+            trial_deltaf = np.interp(target_time, trial_time, trial_deltaf)
+            trial_time = target_time
+
+        return trial_time, trial_deltaf
+
 
     def doric_process(self, filter_frequency=6):
         # Backwards-compatible wrapper: run standard lowpass (butterworth) filter then linear fit
@@ -777,13 +849,14 @@ class PhotometryData:
                 continue
             try:
                 end_time = float(row['End_Time'])
-                end_index = np.searchsorted(doric_time_array, end_time, side='right') - 1
+                end_index = np.searchsorted(doric_time_array, end_time, side='right')
                 if end_index < 0 or end_index >= len(doric_time_array):
                     print('Trial End Out of Bounds, Skipping Event')
                     continue
             except (IndexError, ValueError, TypeError):
                 print('Trial End Out of Bounds or invalid, Skipping Event')
                 continue
+
 
             # Compute the expected number of measurements for this trial from its duration
             try:
@@ -793,32 +866,11 @@ class PhotometryData:
                 # Fallback to at least a single measurement
                 measurements_per_interval = 1
 
-            try:
-                while doric_time_array[start_index] > self.abet_time_list.loc[index, 'Start_Time'] and start_index > 0:
-                    start_index -= 1
-            except IndexError:
-                continue
-
-            try:
-                while doric_time_array[end_index] < self.abet_time_list.loc[index, 'End_Time'] and end_index < len(doric_time_array) - 1:
-                    end_index += 1
-            except IndexError:
-                continue
-
-            # Ensure the slice has the expected number of samples (measurements_per_interval)
-            while (end_index - start_index + 1) < measurements_per_interval and end_index < len(doric_time_array) - 1:
-                end_index += 1
-            while (end_index - start_index + 1) > measurements_per_interval and end_index > start_index:
-                end_index -= 1
-
-            # Prevent inverted indices; ensure at least one sample is selected
-            if end_index < start_index:
-                end_index = start_index
-
-            # Slice numpy arrays for this trial (include end_index)
-            end_slice = min(end_index + 1, len(doric_time_array))
-            trial_time = doric_time_array[start_index:end_slice]
-            trial_deltaf = doric_deltaf_array[start_index:end_slice]
+            trial_time, trial_deltaf = self.extract_trial_data(doric_time_array, 
+                                                               doric_deltaf_array, 
+                                                               start_time, 
+                                                               end_time, 
+                                                               expected_samples=measurements_per_interval)
 
             # Compute z-score normalization as before
             if trial_normalize == 'iti':
@@ -916,7 +968,7 @@ class PhotometryData:
     def get_peri_event_data(self):
         return self.partial_dataframe
 
-    def write_data(self, output_data, filename_override=''):
+    def write_data(self, output_data, filename_override='', format='wide'):
         partial_list = [1, 'SimpleZ', 'simple']
         final_list = [2, 'TimedZ', 'timed']
         partialf_list = [3, 'SimpleF', 'simplef']
@@ -943,16 +995,30 @@ class PhotometryData:
             file_path_string = filename_override + '-' + output_string + '.csv'
 
         print(file_path_string)
-        if output_data in processed_list:
-            self.doric_pd.to_csv(file_path_string, index=False)
-        elif output_data in partial_list:
-            self.partial_dataframe.to_csv(file_path_string, index=False)
-        elif output_data in final_list:
-            self.final_dataframe.to_csv(file_path_string, index=False)
-        elif output_data in partialf_list:
-            self.partial_deltaf.to_csv(file_path_string, index=False)
-        elif output_data in finalf_list:
-            self.final_deltaf.to_csv(file_path_string, index=False)
+        if format == 'long':
+            output_long = None # Hold variable for converted data (default is wide format)
+            if output_data in processed_list:
+                output_long = self.doric_pd.melt(var_name='Time', value_name='DeltaF')
+            elif output_data in partial_list:
+                output_long = self.partial_dataframe.melt(var_name='Trial', value_name='Z-Score')
+            elif output_data in final_list:
+                output_long = self.final_dataframe.melt(var_name='Trial', value_name='Z-Score')
+            elif output_data in partialf_list:
+                output_long = self.partial_deltaf.melt(var_name='Trial', value_name='DeltaF')
+            elif output_data in finalf_list:
+                output_long = self.final_deltaf.melt(var_name='Trial', value_name='DeltaF')
+            output_long.to_csv(file_path_string, index=False)
+        else:
+            if output_data in processed_list:
+                self.doric_pd.to_csv(file_path_string, index=False)
+            elif output_data in partial_list:
+                self.partial_dataframe.to_csv(file_path_string, index=False)
+            elif output_data in final_list:
+                self.final_dataframe.to_csv(file_path_string, index=False)
+            elif output_data in partialf_list:
+                self.partial_deltaf.to_csv(file_path_string, index=False)
+            elif output_data in finalf_list:
+                self.final_deltaf.to_csv(file_path_string, index=False)
 
     def write_summary(self, output_data, summary_string, output_path, session_string):
 
