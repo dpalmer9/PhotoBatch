@@ -19,4 +19,5 @@ from Processing.data_processor import PhotometryData
 from GUI.interface import MultiSelectComboBox, FiberPhotometryApp
 from GUI.launch import launch_photobatch
 
-launch_photobatch()
+if __name__ == '__main__':
+    launch_photobatch()
