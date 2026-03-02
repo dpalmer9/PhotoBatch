@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget, Q
                                QTableWidgetItem, QFormLayout, QMessageBox,
                                QGroupBox, QCheckBox, QHBoxLayout, QMenuBar, QComboBox,
                                QListWidget, QListWidgetItem, QSpinBox, QScrollArea)
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QAction
 from functools import partial
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -49,6 +49,64 @@ class MultiSelectComboBox(QWidget):
         return [self.list_widget.item(i).text() for i in range(self.list_widget.count())
                 if self.list_widget.item(i).checkState() == Qt.Checked]
 
+class FilePathWidget(QWidget):
+    """A composite widget with a QLineEdit and a browse button ('...') for file path input."""
+    def __init__(self, initial_text="", parent=None):
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        self.line_edit = QLineEdit(initial_text)
+        self.browse_btn = QPushButton("\u2026")
+        self.browse_btn.setFixedWidth(28)
+        self.browse_btn.setToolTip("Browse for file")
+        self.browse_btn.clicked.connect(self._browse)
+        layout.addWidget(self.line_edit)
+        layout.addWidget(self.browse_btn)
+
+    def _browse(self):
+        start_dir = os.path.dirname(self.line_edit.text()) if self.line_edit.text() else ""
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select File", start_dir, "All Files (*)")
+        if file_path:
+            self.line_edit.setText(file_path)
+
+    def text(self):
+        return self.line_edit.text()
+
+    def setText(self, text):
+        self.line_edit.setText(text)
+
+
+class AnalysisThread(QThread):
+    """Background thread that runs process_files so the GUI stays responsive
+    during potentially long multi-file analyses.
+    """
+    results_ready = Signal(list, dict)   # (results, combined_results)
+    error_occurred = Signal(str)
+
+    def __init__(self, file_pair_path, event_sheet_path, output_selections,
+                 config, num_workers, parent=None):
+        super().__init__(parent)
+        self.file_pair_path = file_pair_path
+        self.event_sheet_path = event_sheet_path
+        self.output_selections = output_selections
+        self.config = config
+        self.num_workers = num_workers
+
+    def run(self):
+        try:
+            results, combined_results = data_processor.process_files(
+                self.file_pair_path,
+                self.event_sheet_path,
+                self.output_selections,
+                self.config,
+                self.num_workers
+            )
+            self.results_ready.emit(results, combined_results)
+        except Exception as e:
+            self.error_occurred.emit(str(e))
+
+
 class FiberPhotometryApp(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -59,6 +117,8 @@ class FiberPhotometryApp(QMainWindow):
         self.config = configparser.ConfigParser()
 
         self.analysis_results = []
+        self.combined_results = {}
+        self.plot_data = pd.DataFrame()
 
         try:
             if not self.config.read(self.config_file_path):
@@ -246,6 +306,10 @@ class FiberPhotometryApp(QMainWindow):
                     num_filter_spinbox.setValue(int(data.iat[row, col]) if pd.notna(data.iat[row, col]) else 0)
                     num_filter_spinbox.valueChanged.connect(lambda value, r=row: self.adjust_filter_columns(r, value, table_widget))
                     table_widget.setCellWidget(row, col, num_filter_spinbox)
+                elif header in ('abet_path', 'doric_path'):
+                    cell_text = str(data.iat[row, col]) if pd.notna(data.iat[row, col]) else ""
+                    fp_widget = FilePathWidget(cell_text)
+                    table_widget.setCellWidget(row, col, fp_widget)
                 else:
                     item = QTableWidgetItem(str(data.iat[row, col]))
                     item.setFlags(item.flags() | Qt.ItemIsEditable)
@@ -298,6 +362,9 @@ class FiberPhotometryApp(QMainWindow):
                 num_filter_spinbox.setValue(0)
                 num_filter_spinbox.valueChanged.connect(lambda value, r=current_row_count: self.adjust_filter_columns(r, value, table_widget))
                 table_widget.setCellWidget(current_row_count, col, num_filter_spinbox)
+            elif header in ('abet_path', 'doric_path'):
+                fp_widget = FilePathWidget()
+                table_widget.setCellWidget(current_row_count, col, fp_widget)
             else:
                 item = QTableWidgetItem("")
                 item.setFlags(item.flags() | Qt.ItemIsEditable)
@@ -330,8 +397,11 @@ class FiberPhotometryApp(QMainWindow):
             for row in range(rows):
                 row_data = []
                 for col in range(cols):
-                    if isinstance(table_widget.cellWidget(row, col), QComboBox):
-                        row_data.append(table_widget.cellWidget(row, col).currentText())
+                    widget = table_widget.cellWidget(row, col)
+                    if isinstance(widget, QComboBox):
+                        row_data.append(widget.currentText())
+                    elif isinstance(widget, FilePathWidget):
+                        row_data.append(widget.text())
                     else:
                         item = table_widget.item(row, col)
                         row_data.append(item.text() if item else "")
@@ -364,8 +434,10 @@ class FiberPhotometryApp(QMainWindow):
         self.analysis_tab.setLayout(layout)
 
     def run_analysis_action(self):
+        # In background save the current config values in the options tab for consistency
+        self.save_config_changes_to_current_file()
+
         event_sheet_path = self.event_file_path.text()
-        print(event_sheet_path)
         file_pair_path = self.file_pair_path.text()
 
         if not os.path.exists(event_sheet_path) or not os.path.exists(file_pair_path):
@@ -381,16 +453,51 @@ class FiberPhotometryApp(QMainWindow):
                 if checkbox.isChecked():
                     output_selections.append(i + 1)
 
-        self.analysis_results = data_processor.process_files(file_pair_path, event_sheet_path, output_selections, self.config)
+        # Read num_workers from [Concurrency] section; fall back to 1 (sequential).
+        num_workers = 1
+        if 'Concurrency' in self.config:
+            try:
+                num_workers = int(self.config['Concurrency'].get('num_workers', '1'))
+            except (ValueError, TypeError):
+                num_workers = 1
 
-        # Update the UI with the new results
+        # Disable the button while analysis runs to prevent duplicate submissions.
+        self.run_analysis_button.setEnabled(False)
+        self.run_analysis_button.setText("Running…")
+
+        self._analysis_thread = AnalysisThread(
+            file_pair_path, event_sheet_path, output_selections,
+            self.config, num_workers, parent=self
+        )
+        self._analysis_thread.results_ready.connect(self._on_analysis_complete)
+        self._analysis_thread.error_occurred.connect(self._on_analysis_error)
+        self._analysis_thread.start()
+
+    def _on_analysis_complete(self, results, combined_results):
+        """Called on the main thread when the analysis worker finishes."""
+        self.analysis_results = results
+        self.combined_results = combined_results
+        self.run_analysis_button.setEnabled(True)
+        self.run_analysis_button.setText("Run Analysis")
         self.update_results_and_visualization_options()
         QMessageBox.information(self, "Analysis", "Analysis complete!")
+
+    def _on_analysis_error(self, error_msg):
+        """Called on the main thread when the analysis worker raises an exception."""
+        self.run_analysis_button.setEnabled(True)
+        self.run_analysis_button.setText("Run Analysis")
+        QMessageBox.critical(self, "Analysis Error",
+                             f"An error occurred during analysis:\n{error_msg}")
 
     def update_results_and_visualization_options(self):
         # Refresh animal/date selectors and results table
         self.update_animal_date_selects()
+        # update_animal_date_selects triggers cascading date/behavior updates;
+        # force a final results-table refresh in case the animal selection did not change.
         self.update_results_table()
+        # Ensure the visualization behavior selector is also populated.
+        if hasattr(self, 'vis_behavior_select'):
+            self.update_vis_behavior_select()
 
     def init_results_tab(self):
         layout = QVBoxLayout()
@@ -440,8 +547,10 @@ class FiberPhotometryApp(QMainWindow):
         self.vis_animal_select.currentTextChanged.connect(self.update_vis_date_select)
         self.vis_date_select.currentTextChanged.connect(self.update_vis_behavior_select)
         
-        self.event_prior_input = QLineEdit("2.0")
-        self.event_follow_input = QLineEdit("5.0")
+        self.event_prior_input = QLineEdit(self.config['Event_Window']['event_prior'])
+        self.event_prior_input.setDisabled(True)
+        self.event_follow_input = QLineEdit(self.config['Event_Window']['event_follow'])
+        self.event_follow_input.setDisabled(True)
         
         # Visualization mode selector
         self.vis_mode_select = QComboBox()
@@ -449,8 +558,6 @@ class FiberPhotometryApp(QMainWindow):
         controls_layout.addRow("Select Animal ID:", self.vis_animal_select)
         controls_layout.addRow("Select Date:", self.vis_date_select)
         controls_layout.addRow("Select Behavior:", self.vis_behavior_select)
-        controls_layout.addRow("Event Prior (s):", self.event_prior_input)
-        controls_layout.addRow("Event Follow (s):", self.event_follow_input)
         controls_layout.addRow("Visualization Mode:", self.vis_mode_select)
         
         generate_plot_button = QPushButton("Generate Plot")
@@ -506,6 +613,11 @@ class FiberPhotometryApp(QMainWindow):
             self.results_date_select.clear()
             self.results_animal_select.blockSignals(False)
             self.results_date_select.blockSignals(False)
+            # Manually trigger date population for the currently selected animal
+            # (blockSignals suppresses the currentTextChanged signal, so we call it explicitly)
+            current_results_animal = self.results_animal_select.currentText()
+            if current_results_animal:
+                self.update_results_date_select(current_results_animal)
 
         # Update Visualization selectors if present
         if hasattr(self, 'vis_animal_select') and hasattr(self, 'vis_date_select'):
@@ -519,6 +631,10 @@ class FiberPhotometryApp(QMainWindow):
             self.vis_date_select.clear()
             self.vis_animal_select.blockSignals(False)
             self.vis_date_select.blockSignals(False)
+            # Manually trigger the vis date + behavior cascade
+            current_vis_animal = self.vis_animal_select.currentText()
+            if current_vis_animal:
+                self.update_vis_date_select(current_vis_animal)
 
     def update_vis_date_select(self, animal):
         """Populate the visualization date select when the animal selection changes."""
@@ -583,9 +699,13 @@ class FiberPhotometryApp(QMainWindow):
         self.results_table.setColumnCount(3) # Behavior, Max Peak, AUC
         self.results_table.setHorizontalHeaderLabels(['Behavior', 'Max Peak', 'AUC'])
         for i, res in enumerate(filtered_results):
-            self.results_table.setItem(i, 0, QTableWidgetItem(res['behavior']))
-            self.results_table.setItem(i, 1, QTableWidgetItem(f"{res['max_peak']:.4f}"))
-            self.results_table.setItem(i, 2, QTableWidgetItem(f"{res['auc']:.4f}"))
+            self.results_table.setItem(i, 0, QTableWidgetItem(str(res.get('behavior', ''))))
+            max_peak = res.get('max_peak')
+            auc = res.get('auc')
+            self.results_table.setItem(i, 1, QTableWidgetItem(
+                f"{float(max_peak):.4f}" if max_peak is not None else 'N/A'))
+            self.results_table.setItem(i, 2, QTableWidgetItem(
+                f"{float(auc):.4f}" if auc is not None else 'N/A'))
         self.results_table.resizeColumnsToContents()
 
     def update_vis_file_select(self):
@@ -676,6 +796,9 @@ class FiberPhotometryApp(QMainWindow):
         self.canvas.draw()
 
     def save_plot_data(self):
+        if not hasattr(self, 'plot_data') or self.plot_data.empty:
+            QMessageBox.warning(self, "No Data", "Generate a plot first before saving plot data.")
+            return
         file_path, _ = QFileDialog.getSaveFileName(self, "Save Plot Data", "", "CSV Files (*.csv)")
         if file_path:
             self.plot_data.to_csv(file_path)
