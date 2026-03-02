@@ -3,6 +3,7 @@ import os
 import sys
 import csv
 import configparser
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from scipy import signal
 from scipy.optimize import curve_fit
@@ -68,7 +69,6 @@ class PhotometryData:
         # Initialize List Variables
 
         self.abet_time_list = []
-        self.anymaze_e
 
         # Initialize Data Objects (Tables, Series, etc)
 
@@ -1114,9 +1114,125 @@ def abet_extract_information(abet_file_path):
     abet_file.close()
     return animal_id, date, schedule
 
-def process_files(file_sheet_path, event_sheet_path, output_options, config):
-    file_pair_df = pd.read_csv(file_sheet_path)    
-    num_rows = len(file_pair_df)
+def _process_single_file(args):
+    """Module-level worker for ProcessPoolExecutor. Processes one ABET/Doric file pair
+    across all events and returns a list of per-event result dicts.
+
+    Accepts a single tuple argument so it works cleanly with executor.map / executor.submit.
+    All config values are passed as primitive Python types so the tuple is safely picklable
+    across process boundaries.
+    """
+    (row_dict, event_sheet_path, output_options,
+     event_window_prior, event_window_follow,
+     trial_start_stage, trial_end_stage,
+     iti_prior_trial, center_z, center_method,
+     filter_type, filter_name, filter_order, filter_cutoff,
+     fit_type, exclusion_list) = args
+
+    row = pd.Series(row_dict)
+    file_results = []
+
+    photometry_data = PhotometryData()
+    photometry_data.load_abet_data(row['abet_path'])
+    photometry_data.load_doric_data(
+        row['doric_path'], row['ctrl_col_num'],
+        row['act_col_num'], row['ttl_col_num'], row['mode']
+    )
+    photometry_data.abet_doric_synchronize()
+
+    time_data, filtered_f0, filtered_f = photometry_data.doric_filter(
+        filter_type=filter_type,
+        filter_name=filter_name,
+        filter_order=filter_order,
+        filter_cutoff=filter_cutoff
+    )
+    photometry_data.doric_fit(fit_type, filtered_f0, filtered_f, time_data)
+    photometry_data.abet_trial_definition(trial_start_stage, trial_end_stage)
+
+    try:
+        animal_id, date, _ = abet_extract_information(row['abet_path'])
+    except Exception:
+        animal_id, date = None, None
+
+    event_sheet_df = pd.read_csv(event_sheet_path)
+
+    for _, event_row in event_sheet_df.iterrows():
+        photometry_data.abet_search_event(
+            start_event_id=event_row['event_type'],
+            start_event_item_name=event_row['event_name'],
+            start_event_group=event_row['event_group'],
+            extra_prior_time=event_window_prior,
+            extra_follow_time=event_window_follow,
+            exclusion_list=exclusion_list
+        )
+        photometry_data.trial_separator(
+            trial_normalize=center_z,
+            trial_iti_pad=iti_prior_trial,
+            center_method=center_method
+        )
+
+        for output in output_options:
+            if output <= 7:
+                photometry_data.write_data(output)
+            else:
+                photometry_data.write_summary(output)
+
+        max_peak = photometry_data.calculate_max_peak()
+        auc = photometry_data.calculate_auc(-event_window_prior, event_window_follow)
+
+        plot_df = photometry_data.get_peri_event_data()
+        try:
+            plot_df_copy = plot_df.copy(deep=True)
+        except Exception:
+            plot_df_copy = pd.DataFrame(plot_df)
+
+        try:
+            print(f"Processed file={row['abet_path']} behavior={event_row['event_name']} plot_shape={plot_df_copy.shape}")
+        except Exception:
+            print("Processed one result (unable to format debug info)")
+
+        file_results.append({
+            "file": os.path.basename(row['abet_path']),
+            "behavior": event_row['event_name'],
+            "max_peak": max_peak,
+            "auc": auc,
+            "plot_data": plot_df_copy,
+            "animal_id": animal_id,
+            "date": date
+        })
+
+    return file_results
+
+
+def process_files(file_sheet_path, event_sheet_path, output_options, config, num_workers=1):
+    """Process all file pairs defined in *file_sheet_path* and return
+    ``(results, combined_results)``.
+
+    Parameters
+    ----------
+    file_sheet_path : str
+        Path to the CSV file-pair sheet.
+    event_sheet_path : str
+        Path to the CSV event sheet.
+    output_options : list[int]
+        Indices of selected output types.
+    config : configparser.ConfigParser
+        Loaded application configuration.
+    num_workers : int
+        Number of parallel worker processes.  Use 1 for sequential (default).
+        Values > 1 spawn a ``ProcessPoolExecutor`` so each file pair is handled
+        by an independent OS process, giving true CPU-level parallelism for the
+        filtering, fitting, and trial-separation steps.
+
+    Returns
+    -------
+    tuple[list[dict], dict[str, dict]]
+        *results* – flat list of per-event result dicts (individual animals plus
+        combined sentinel entries with ``animal_id=None``).
+        *combined_results* – mapping from behavior name to its aggregated result
+        dict, ready for direct use in the visualization tab.
+    """
+    file_pair_df = pd.read_csv(file_sheet_path)
 
     event_window_prior = float(config['Event_Window']['event_prior'])
     event_window_follow = float(config['Event_Window']['event_follow'])
@@ -1130,82 +1246,61 @@ def process_files(file_sheet_path, event_sheet_path, output_options, config):
 
     filter_type = config['Photometry_Processing']['filter_type']
     filter_name = config['Photometry_Processing']['filter_name']
-    filter_order = int(config['Photometry_Processing']['filter_order']) 
+    filter_order = int(config['Photometry_Processing']['filter_order'])
     filter_cutoff = int(config['Photometry_Processing']['filter_cutoff'])
 
     fit_type = config['Photometry_Processing']['fit_type']
 
     exclusion_list = [item.strip() for item in config['Filter']['exclusion_list'].split(',')]
-    
+
+    # Build one args-tuple per file pair (all primitives – safe to pickle).
+    args_list = [
+        (
+            row.to_dict(), event_sheet_path, output_options,
+            event_window_prior, event_window_follow,
+            trial_start_stage, trial_end_stage,
+            iti_prior_trial, center_z, center_method,
+            filter_type, filter_name, filter_order, filter_cutoff,
+            fit_type, exclusion_list
+        )
+        for _, row in file_pair_df.iterrows()
+    ]
+
     results = []
-    # Sequential processing instead of multiprocessing
-    for _, row in file_pair_df.iterrows():
-        photometry_data = PhotometryData()
-        photometry_data.load_abet_data(row['abet_path'])
-        photometry_data.load_doric_data(row['doric_path'], row['ctrl_col_num'], row['act_col_num'], row['ttl_col_num'], row['mode'])
-        photometry_data.abet_doric_synchronize()
-        # Use the split filter and fit functions
-        time_data, filtered_f0, filtered_f = photometry_data.doric_filter(filter_cutoff)
-        photometry_data.doric_fit(fit_type, filtered_f0, filtered_f, time_data)
-        
-        # Extract values from config object
-        photometry_data.abet_trial_definition(trial_start_stage, trial_end_stage)
 
-        
-        event_sheet_df = pd.read_csv(event_sheet_path)
-
-        for _, event_row in event_sheet_df.iterrows():
-            photometry_data.abet_search_event(
-                start_event_id=event_row['event_type'],
-                start_event_item_name=event_row['event_name'],
-                start_event_group=event_row['event_group'],
-                extra_prior_time = event_window_prior,
-                extra_follow_time = event_window_follow,
-                exclusion_list = exclusion_list
-            )
-            photometry_data.trial_separator(trial_normalize=center_z,
-                                            trial_iti_pad=iti_prior_trial,
-                                            center_method=center_method)
-
-            for output in output_options:
-                if output <= 7:
-                    photometry_data.write_data(output)
-                else:
-                    photometry_data.write_summary(output)
-
-            max_peak = photometry_data.calculate_max_peak()
-            auc = photometry_data.calculate_auc(-event_window_prior, event_window_follow)
-
-            plot_df = photometry_data.get_peri_event_data()
-            # Make defensive copy so later operations don't mutate stored result
+    if num_workers > 1:
+        # Use a thread pool for I/O and GIL-releasing numerical work.
+        # ThreadPoolExecutor runs in the same process as the GUI so no new
+        # windows are ever spawned.  numpy/scipy release the GIL during their
+        # C-extension calls, so multiple file pairs can execute their filtering,
+        # fitting, and trial-separation steps genuinely in parallel.
+        try:
+            with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                futures = {executor.submit(_process_single_file, args): i
+                           for i, args in enumerate(args_list)}
+                for future in as_completed(futures):
+                    try:
+                        results.extend(future.result())
+                    except Exception as e:
+                        print(f"Worker error for file pair {futures[future]}: {e}")
+        except Exception as e:
+            print(f"ThreadPoolExecutor failed ({e}); falling back to sequential processing.")
+            for args in args_list:
+                try:
+                    results.extend(_process_single_file(args))
+                except Exception as ex:
+                    print(f"Sequential fallback error: {ex}")
+    else:
+        # Sequential path – used when num_workers == 1 or as the fallback.
+        for args in args_list:
             try:
-                plot_df_copy = plot_df.copy(deep=True)
-            except Exception:
-                plot_df_copy = pd.DataFrame(plot_df)
+                results.extend(_process_single_file(args))
+            except Exception as e:
+                print(f"Processing error: {e}")
 
-            # Debug: print shape to help trace empty outputs
-            try:
-                print(f"Processed file={row['abet_path']} behavior={event_row['event_name']} plot_shape={plot_df_copy.shape}")
-            except Exception:
-                print("Processed one result (unable to format debug info)")
-
-            # Add animal id and date extracted from the ABET file for downstream labeling
-            try:
-                animal_id, date, _ = abet_extract_information(row['abet_path'])
-            except Exception:
-                animal_id, date = None, None
-
-            results.append({
-                "file": os.path.basename(row['abet_path']),
-                "behavior": event_row['event_name'],
-                "max_peak": max_peak,
-                "auc": auc,
-                "plot_data": plot_df_copy,
-                "animal_id": animal_id,
-                "date": date
-            })
-
-    # Create a combined result for each behavior
+    # ------------------------------------------------------------------
+    # Aggregate per-behavior combined results
+    # ------------------------------------------------------------------
     combined_results = {}
     for res in results:
         behavior = res['behavior']
@@ -1213,23 +1308,46 @@ def process_files(file_sheet_path, event_sheet_path, output_options, config):
             combined_results[behavior] = {
                 "file": "Combined",
                 "behavior": behavior,
-                "plot_data": pd.DataFrame()
+                "animal_id": None,
+                "date": None,
+                "auc_list": [],
+                "max_peak_list": [],
+                "plot_data_list": []
             }
-        combined_results[behavior]["plot_data"] = pd.concat([combined_results[behavior]["plot_data"], res["plot_data"]], axis=1)
+        
+        combined_results[behavior]["auc_list"].append(res["auc"])
+        combined_results[behavior]["max_peak_list"].append(res["max_peak"])
+        # res["plot_data"] is a DataFrame where each column is a trial.
+        # We take the mean across all trials for this specific animal/file.
+        if not res["plot_data"].empty:
+            mean_plot = res["plot_data"].mean(axis=1)
+            combined_results[behavior]["plot_data_list"].append(mean_plot)
 
     for behavior, data in combined_results.items():
-        if not data["plot_data"].empty:
-            data["max_peak"] = data["plot_data"].max().mean()
-
-            time_series = np.linspace(-event_window_prior, event_window_follow, num=len(data["plot_data"]))
-            auc_values = []
-            for col in data["plot_data"].columns:
-                auc_values.append(np.trapz(y=data["plot_data"][col], x=time_series))
-            data["auc"] = np.mean(auc_values)
+        if data["auc_list"]:
+            data["auc"] = float(np.mean(data["auc_list"]))
+            data["max_peak"] = float(np.mean(data["max_peak_list"]))
+            
+            # Combine the mean plot data from each animal into a single DataFrame.
+            # Each entry in plot_data_list is a Series (mean of one animal).
+            # Resulting plot_data will have animals as columns.
+            if data["plot_data_list"]:
+                data["plot_data"] = pd.concat(data["plot_data_list"], axis=1)
+            else:
+                data["plot_data"] = pd.DataFrame()
         else:
-            data["max_peak"] = 0
             data["auc"] = 0
+            data["max_peak"] = 0
+            data["plot_data"] = pd.DataFrame()
+            
+        # Clean up temporary lists
+        del data["auc_list"]
+        del data["max_peak_list"]
+        del data["plot_data_list"]
 
+    # Append combined sentinel entries so the GUI's existing animal/date
+    # selectors (which look for animal_id == None) keep working.
+    for behavior, data in combined_results.items():
         results.append(data)
 
-    return results
+    return results, combined_results
