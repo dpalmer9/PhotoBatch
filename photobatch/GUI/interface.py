@@ -6,9 +6,10 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget, Q
                                QPushButton, QLabel, QFileDialog, QLineEdit, QTableWidget,
                                QTableWidgetItem, QFormLayout, QMessageBox,
                                QGroupBox, QCheckBox, QHBoxLayout, QMenuBar, QComboBox,
-                               QListWidget, QListWidgetItem, QSpinBox, QScrollArea)
-from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QAction
+                               QListWidget, QListWidgetItem, QSpinBox, QScrollArea,
+                               QStackedWidget, QGridLayout, QProgressBar, QStatusBar, QMenu)
+from PySide6.QtCore import Qt, QThread, Signal, QSize
+from PySide6.QtGui import QAction, QIcon, QFont, QCursor
 from functools import partial
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -25,10 +26,16 @@ class MultiSelectComboBox(QWidget):
     def __init__(self):
         super().__init__()
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
         self.line_edit = QLineEdit()
         self.line_edit.setPlaceholderText("Select or add new entries...")
         self.line_edit.returnPressed.connect(self.add_custom_entry)
         self.list_widget = QListWidget()
+        self.list_widget.setFlow(QListWidget.LeftToRight)
+        self.list_widget.setWrapping(True)
+        self.list_widget.setResizeMode(QListWidget.Adjust)
+        self.list_widget.setSpacing(4)
+        self.list_widget.setMaximumHeight(100)
         layout.addWidget(self.line_edit)
         layout.addWidget(self.list_widget)
 
@@ -146,7 +153,24 @@ class FiberPhotometryApp(QMainWindow):
             self._original_config_text = None
 
         self.template_loaded = False
-        self.tabs = QTabWidget()
+        
+        main_widget = QWidget()
+        main_layout = QHBoxLayout(main_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        
+        self.sidebar = QListWidget()
+        self.sidebar.setFixedWidth(200)
+        self.sidebar.setObjectName("Sidebar")
+        self.sidebar.currentRowChanged.connect(self.change_tab)
+        
+        self.stacked_widget = QStackedWidget()
+        
+        main_layout.addWidget(self.sidebar)
+        main_layout.addWidget(self.stacked_widget)
+        
+        self.setCentralWidget(main_widget)
+
         self.home_tab = QWidget()
         self.event_sheet_tab = QWidget()
         self.file_pair_tab = QWidget()
@@ -155,15 +179,16 @@ class FiberPhotometryApp(QMainWindow):
         self.results_tab = QWidget()
         self.visualization_tab = QWidget()
 
-        self.tabs.addTab(self.home_tab, "Home")
-        self.tabs.addTab(self.event_sheet_tab, "Event Sheet")
-        self.tabs.addTab(self.file_pair_tab, "File Pair")
-        self.tabs.addTab(self.options_tab, "Options")
-        self.tabs.addTab(self.analysis_tab, "Analysis")
-        self.tabs.addTab(self.results_tab, "Results")
-        self.tabs.addTab(self.visualization_tab, "Visualization")
-
-        self.setCentralWidget(self.tabs)
+        self.add_sidebar_tab(self.home_tab, "Home")
+        self.add_sidebar_tab(self.event_sheet_tab, "Event Sheet")
+        self.add_sidebar_tab(self.file_pair_tab, "File Pair")
+        self.add_sidebar_tab(self.options_tab, "Options")
+        self.add_sidebar_tab(self.analysis_tab, "Analysis")
+        self.add_sidebar_tab(self.results_tab, "Results")
+        self.add_sidebar_tab(self.visualization_tab, "Visualization")
+        
+        self.init_status_bar()
+        self.apply_theme()
         self.init_home_tab()
         self.init_event_sheet_tab()
         self.init_file_pair_tab()
@@ -175,6 +200,113 @@ class FiberPhotometryApp(QMainWindow):
         # After all UI tabs/widgets are initialized, load any default file paths from the config
         # and auto-populate the event and file-pair tables if valid file paths are provided.
         self.load_defaults_from_config()
+
+    def add_sidebar_tab(self, widget, name):
+        self.stacked_widget.addWidget(widget)
+        item = QListWidgetItem(name)
+        item.setSizeHint(QSize(0, 40))
+        item.setFont(QFont("Inter", 12))
+        self.sidebar.addItem(item)
+        
+    def change_tab(self, index):
+        if self.sidebar.item(index).text() == "Analysis":
+            event_sheet_path = self.event_file_path.text()
+            file_pair_path = self.file_pair_path.text()
+            if not os.path.exists(event_sheet_path) or not os.path.exists(file_pair_path):
+                QMessageBox.warning(self, "Prerequisites Missing", "Please load an Event Sheet and File Pair sheet before proceeding to Analysis.")
+                self.sidebar.setCurrentRow(1) # Reverts to Event Sheet tab
+                return
+        self.stacked_widget.setCurrentIndex(index)
+        
+    def init_status_bar(self):
+        self.status_bar = QStatusBar()
+        self.setStatusBar(self.status_bar)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 0)
+        self.progress_bar.hide()
+        self.status_bar.addPermanentWidget(self.progress_bar)
+        self.status_bar.showMessage("Ready")
+        
+    def apply_theme(self):
+        qss = """
+        QMainWindow { background-color: #1e1e2e; color: #cdd6f4; }
+        QWidget {
+            background-color: #1e1e2e;
+            color: #cdd6f4;
+            font-family: 'Inter', 'Segoe UI', 'Roboto', sans-serif;
+            font-size: 13px;
+        }
+        QPushButton {
+            background-color: #89b4fa;
+            color: #11111b;
+            border: none;
+            border-radius: 4px;
+            padding: 6px 16px;
+            font-weight: bold;
+        }
+        QPushButton:hover { background-color: #b4befe; }
+        QPushButton:pressed { background-color: #74c7ec; }
+        QPushButton:disabled { background-color: #45475a; color: #6c7086; }
+        QLineEdit, QComboBox, QSpinBox {
+            background-color: #313244;
+            border: 1px solid #45475a;
+            border-radius: 4px;
+            padding: 4px;
+            color: #cdd6f4;
+        }
+        QTableWidget {
+            background-color: #1e1e2e;
+            alternate-background-color: #313244;
+            gridline-color: #45475a;
+            border: 1px solid #45475a;
+            border-radius: 4px;
+        }
+        QHeaderView::section {
+            background-color: #313244;
+            color: #cdd6f4;
+            padding: 4px;
+            border: none;
+            font-weight: bold;
+        }
+        QGroupBox {
+            border: 1px solid #45475a;
+            border-radius: 6px;
+            margin-top: 10px;
+        }
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            subcontrol-position: top left;
+            padding: 0 4px;
+            color: #89b4fa;
+        }
+        QListWidget#Sidebar {
+            background-color: #181825;
+            border-right: 1px solid #313244;
+            padding-top: 10px;
+        }
+        QListWidget#Sidebar::item {
+            padding: 10px;
+            margin: 4px 10px;
+            border-radius: 6px;
+        }
+        QListWidget#Sidebar::item:hover { background-color: #313244; }
+        QListWidget#Sidebar::item:selected {
+            background-color: #89b4fa;
+            color: #11111b;
+            font-weight: bold;
+        }
+        QProgressBar {
+            border: 1px solid #45475a;
+            border-radius: 4px;
+            text-align: center;
+        }
+        QProgressBar::chunk {
+            background-color: #a6e3a1;
+            width: 20px;
+        }
+        QStatusBar { background-color: #181825; color: #cdd6f4; }
+        """
+        self.setStyleSheet(qss)
 
     def init_menu_bar(self):
         menu_bar = QMenuBar(self)
@@ -214,7 +346,42 @@ class FiberPhotometryApp(QMainWindow):
 
     def init_home_tab(self):
         layout = QVBoxLayout()
-        layout.addWidget(QLabel("Welcome to the Fiber Photometry Data Analyzer"))
+        
+        # Welcome Header
+        welcome_label = QLabel("Welcome to the Fiber Photometry Data Analyzer")
+        welcome_label.setFont(QFont("Inter", 18, QFont.Bold))
+        layout.addWidget(welcome_label)
+        
+        # System Info Box
+        info_group = QGroupBox("System Status")
+        info_layout = QFormLayout()
+        import platform
+        info_layout.addRow("Python Version:", QLabel(sys.version.split(' ')[0]))
+        info_layout.addRow("OS Platform:", QLabel(f"{platform.system()} {platform.release()}"))
+        try:
+            cores = str(os.cpu_count())
+        except Exception:
+            cores = "Unknown"
+        info_layout.addRow("CPU Cores Available:", QLabel(cores))
+        info_group.setLayout(info_layout)
+        layout.addWidget(info_group)
+        
+        # Quick Start Guide
+        guide_group = QGroupBox("Quick Start Guide")
+        guide_layout = QVBoxLayout()
+        guide_text = QLabel(
+            "1. Go to 'Event Sheet' to load or create your event definitions.\n"
+            "2. Go to 'File Pair' to link Doric and Abet files.\n"
+            "3. Configure your processing parameters in the 'Options' tab.\n"
+            "4. Run your analysis from the 'Analysis' tab.\n"
+            "5. View results and generate plots in the 'Results' and 'Visualization' tabs."
+        )
+        guide_text.setWordWrap(True)
+        guide_layout.addWidget(guide_text)
+        guide_group.setLayout(guide_layout)
+        layout.addWidget(guide_group)
+        
+        layout.addStretch()
         self.home_tab.setLayout(layout)
 
     def init_event_sheet_tab(self):
@@ -228,17 +395,14 @@ class FiberPhotometryApp(QMainWindow):
         self.event_table = QTableWidget()
         self.event_table.setColumnCount(5)
         self.event_table.setHorizontalHeaderLabels(['event_type', 'event_name', 'event_group', 'event_arg', 'num_filter'])
+        self.event_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.event_table.customContextMenuRequested.connect(lambda pos: self.show_table_context_menu(pos, self.event_table))
         layout.addWidget(self.event_table)
         button_layout = QHBoxLayout()
-        add_row_btn = QPushButton("Add Row")
-        add_row_btn.clicked.connect(lambda: self.add_row(self.event_table))
-        remove_row_btn = QPushButton("Remove Row")
-        remove_row_btn.clicked.connect(lambda: self.remove_row(self.event_table))
         save_btn = QPushButton("Save to CSV")
         save_btn.clicked.connect(lambda: self.save_table_to_csv(self.event_table))
-        button_layout.addWidget(add_row_btn)
-        button_layout.addWidget(remove_row_btn)
         button_layout.addWidget(save_btn)
+        layout.addStretch()
         layout.addLayout(button_layout)
         self.event_sheet_tab.setLayout(layout)
 
@@ -253,19 +417,26 @@ class FiberPhotometryApp(QMainWindow):
         self.file_pair_table = QTableWidget()
         self.file_pair_table.setColumnCount(6)
         self.file_pair_table.setHorizontalHeaderLabels(['abet_path', 'doric_path', 'ctrl_col_num', 'act_col_num', 'ttl_col_num', 'mode'])
+        self.file_pair_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.file_pair_table.customContextMenuRequested.connect(lambda pos: self.show_table_context_menu(pos, self.file_pair_table))
         layout.addWidget(self.file_pair_table)
         button_layout = QHBoxLayout()
-        add_row_btn = QPushButton("Add Row")
-        add_row_btn.clicked.connect(lambda: self.add_row(self.file_pair_table))
-        remove_row_btn = QPushButton("Remove Row")
-        remove_row_btn.clicked.connect(lambda: self.remove_row(self.file_pair_table))
         save_btn = QPushButton("Save to CSV")
         save_btn.clicked.connect(lambda: self.save_table_to_csv(self.file_pair_table))
-        button_layout.addWidget(add_row_btn)
-        button_layout.addWidget(remove_row_btn)
         button_layout.addWidget(save_btn)
+        layout.addStretch()
         layout.addLayout(button_layout)
         self.file_pair_tab.setLayout(layout)
+
+    def show_table_context_menu(self, pos, table_widget):
+        menu = QMenu()
+        add_action = menu.addAction("Add Row")
+        remove_action = menu.addAction("Remove Row")
+        action = menu.exec(table_widget.viewport().mapToGlobal(pos))
+        if action == add_action:
+            self.add_row(table_widget)
+        elif action == remove_action:
+            self.remove_row(table_widget)
 
     def load_event_sheet(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Open Event Sheet", "", "CSV Files (*.csv)")
@@ -471,6 +642,8 @@ class FiberPhotometryApp(QMainWindow):
         )
         self._analysis_thread.results_ready.connect(self._on_analysis_complete)
         self._analysis_thread.error_occurred.connect(self._on_analysis_error)
+        self.progress_bar.show()
+        self.status_bar.showMessage("Running Analysis...")
         self._analysis_thread.start()
 
     def _on_analysis_complete(self, results, combined_results):
@@ -479,6 +652,8 @@ class FiberPhotometryApp(QMainWindow):
         self.combined_results = combined_results
         self.run_analysis_button.setEnabled(True)
         self.run_analysis_button.setText("Run Analysis")
+        self.progress_bar.hide()
+        self.status_bar.showMessage("Analysis Complete")
         self.update_results_and_visualization_options()
         QMessageBox.information(self, "Analysis", "Analysis complete!")
 
@@ -486,6 +661,8 @@ class FiberPhotometryApp(QMainWindow):
         """Called on the main thread when the analysis worker raises an exception."""
         self.run_analysis_button.setEnabled(True)
         self.run_analysis_button.setText("Run Analysis")
+        self.progress_bar.hide()
+        self.status_bar.showMessage("Analysis Error")
         QMessageBox.critical(self, "Analysis Error",
                              f"An error occurred during analysis:\n{error_msg}")
 
