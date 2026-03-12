@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 import h5py
 from sklearn.linear_model import LinearRegression, HuberRegressor
+from pathlib import Path
 
 
 # Classes
@@ -20,13 +21,10 @@ class PhotometryData:
     def __init__(self):
 
         # Initialize Folder Path Variables
-        self.curr_dir = os.getcwd()
-        if sys.platform == 'linux' or sys.platform == 'darwin':
-            self.folder_symbol = '/'
-        elif sys.platform == 'win32':
-            self.folder_symbol = '\\'
-        self.main_folder_path = os.getcwd()
-        self.data_folder_path = self.main_folder_path + self.folder_symbol + 'Data' + self.folder_symbol
+        self.curr_dir = Path.cwd()
+        self.main_folder_path = Path.cwd()
+        self.folder_symbol = os.sep
+        self.data_folder_path = self.main_folder_path / 'Data'
 
         self.abet_file_path = ''
         self.abet_file = ''
@@ -98,37 +96,33 @@ class PhotometryData:
 
         self.abet_file_path = filepath
         self.abet_loaded = True
-        abet_file = open(self.abet_file_path)
-        abet_csv_reader = csv.reader(abet_file)
-        abet_data_list = list()
-        abet_name_list = list()
-        event_time_colname = ['Evnt_Time', 'Event_Time']
-        colnames_found = False
-        for row_csv in abet_csv_reader:
-            if not colnames_found:
-                if len(row_csv) == 0:
+        
+        with open(self.abet_file_path, 'r', encoding='utf-8') as abet_file:
+            abet_csv_reader = csv.reader(abet_file)
+            header_idx = 0
+            event_time_colname = ['Evnt_Time', 'Event_Time']
+            abet_name_list = []
+            for i, row in enumerate(abet_csv_reader):
+                if not row:
                     continue
-                if row_csv[0] == 'Animal ID':
-                    self.animal_id = str(row_csv[1])
-                    continue
-                if row_csv[0] == 'Date/Time':
-                    self.date = str(row_csv[1])
-                    self.date = self.date.replace(':', '-')
-                    self.date = self.date.replace('/', '-')
-                    continue
-                if row_csv[0] in event_time_colname:
-                    colnames_found = True
-                    self.time_var_name = row_csv[0]
-                    self.event_name_col = row_csv[2]
-                    # Columns are 0-time, 1-Event ID, 2-Event name, 3-Item Name, 5-Group ID, 8-Arg-1 Value
-                    abet_name_list = [row_csv[0], row_csv[1], row_csv[2], row_csv[3], row_csv[5], row_csv[8]]
-                else:
-                    continue
-            else:
-                abet_data_list.append([row_csv[0], row_csv[1], row_csv[2], row_csv[3], row_csv[5], row_csv[8]])
-        abet_file.close()
-        abet_numpy = np.array(abet_data_list)
-        self.abet_pandas = pd.DataFrame(data=abet_numpy, columns=abet_name_list)
+                if row[0] == 'Animal ID':
+                    self.animal_id = str(row[1])
+                elif row[0] == 'Date/Time':
+                    self.date = str(row[1]).replace(':', '-').replace('/', '-')
+                elif row[0] in event_time_colname:
+                    header_idx = i
+                    self.time_var_name = row[0]
+                    self.event_name_col = row[2]
+                    abet_name_list = [row[0], row[1], row[2], row[3], row[5], row[8]]
+                    break
+        
+        # Vectorized metadata extraction via pd.read_csv for performance
+        abet_full_df = pd.read_csv(self.abet_file_path, skiprows=header_idx, dtype=str)
+        if len(abet_full_df.columns) > 8:
+            self.abet_pandas = abet_full_df.iloc[:, [0, 1, 2, 3, 5, 8]].copy()
+            self.abet_pandas.columns = abet_name_list
+        else:
+            self.abet_pandas = pd.DataFrame(columns=abet_name_list)
 
     def load_doric_data(self, filepath, ch1_col, ch2_col, ttl_col, mode=''):
         self.doric_loaded = True
@@ -532,6 +526,14 @@ class PhotometryData:
         # print(paired_abet_times)
         ttl_model = LinearRegression()
         ttl_model.fit(np.array(paired_doric_times).reshape(-1, 1), paired_abet_times)
+        
+        # Calculate sync diagnostics: Residual Time Error
+        predicted_abet = ttl_model.predict(np.array(paired_doric_times).reshape(-1, 1))
+        residual_error = np.abs(paired_abet_times - predicted_abet).mean()
+        print(f"Synchronization Residual Error (Mean Abs): {residual_error:.4f} seconds")
+        if residual_error > 0.1:
+            print("WARNING: High synchronization error detected. Sync may be mismatched.")
+
         self.doric_pandas['Time'] = (self.doric_pandas['Time'] * ttl_model.coef_[0]) + ttl_model.intercept_
         print(self.doric_pandas['Time'].head(20))
 
@@ -618,7 +620,7 @@ class PhotometryData:
             try:
                 filtered_f0 = signal.savgol_filter(f0_data, window_length, polyorder)
                 filtered_f = signal.savgol_filter(f_data, window_length, polyorder)
-            except Exception:
+            except (ValueError, TypeError):
                 # If savgol fails for any reason, fall back to original data
                 filtered_f0 = f0_data.copy()
                 filtered_f = f_data.copy()
@@ -677,7 +679,7 @@ class PhotometryData:
                 C0 = np.min(y)
                 popt, _ = curve_fit(lambda tt, A, k, C: A * np.exp(-k * tt) + C, t, y, p0=[A0, k0, C0], maxfev=10000)
                 fitted = popt[0] * np.exp(-popt[1] * t) + popt[2]
-            except Exception:
+            except (RuntimeError, TypeError, ValueError):
                 # Fallback to linear regression between channels if exponential fit fails
                 filtered_poly = np.polyfit(filtered_f0, filtered_f, 1)
                 fitted = np.multiply(filtered_poly[0], filtered_f0) + filtered_poly[1]
@@ -707,7 +709,7 @@ class PhotometryData:
                 # Solve C z = W y
                 try:
                     z = spsolve(C, w * y)
-                except Exception:
+                except (RuntimeError, ValueError):
                     # fallback to dense solve if sparse solve fails
                     C_dense = (W + H).toarray()
                     z = np.linalg.solve(C_dense, w * y)
@@ -754,6 +756,11 @@ class PhotometryData:
         self.doric_pd = pd.DataFrame(time_data)
         self.doric_pd['DeltaF'] = delta_f
         self.doric_pd = self.doric_pd.rename(columns={0: 'Time', 1: 'DeltaF'})
+
+        import gc
+        self.doric_pandas = pd.DataFrame()
+        self.ttl_pandas = pd.DataFrame()
+        gc.collect()
 
     def extract_trial_data(self, doric_time_array, doric_deltaf_array, start_time, end_time, expected_samples=None):
         """
@@ -837,9 +844,10 @@ class PhotometryData:
         zscore_trials = []
         deltaf_trials = []
 
-        for index, row in self.abet_time_list.iterrows():
+        for row in self.abet_time_list.itertuples():
+            index = row.Index
             try:
-                start_time = float(row['Start_Time'])
+                start_time = float(row.Start_Time)
                 start_index = np.searchsorted(doric_time_array, start_time, side='left')
                 if start_index >= len(doric_time_array):
                     print('Trial Start Out of Bounds, Skipping Event')
@@ -848,7 +856,7 @@ class PhotometryData:
                 print('Trial Start Out of Bounds or invalid, Skipping Event')
                 continue
             try:
-                end_time = float(row['End_Time'])
+                end_time = float(row.End_Time)
                 end_index = np.searchsorted(doric_time_array, end_time, side='right')
                 if end_index < 0 or end_index >= len(doric_time_array):
                     print('Trial End Out of Bounds, Skipping Event')
@@ -862,7 +870,7 @@ class PhotometryData:
             try:
                 length_time = end_time - start_time
                 measurements_per_interval = max(1, int(round(length_time * self.sample_frequency)))
-            except Exception:
+            except (ValueError, TypeError, ArithmeticError):
                 # Fallback to at least a single measurement
                 measurements_per_interval = 1
 
@@ -980,16 +988,16 @@ class PhotometryData:
         output_string = output_string_list[output_data-1]
 
 
-        output_folder = self.main_folder_path + self.folder_symbol + 'Output'
-        if not (os.path.isdir(output_folder)):
-            os.mkdir(output_folder)
+        output_folder = self.main_folder_path / 'Output'
+        output_folder.mkdir(exist_ok=True)
         if self.abet_loaded is True and self.anymaze_loaded is False:
-            file_path_string = output_folder + self.folder_symbol + output_string + '-' + self.animal_id + ' ' + \
-                               self.date + ' ' + self.event_name + '.csv'
+            file_name_str = f"{output_string}-{self.animal_id} {self.date} {self.event_name}.csv"
+            file_path_string = str(output_folder / file_name_str)
         else:
             current_time = datetime.now()
             current_time_string = current_time.strftime('%d-%m-%Y %H-%M-%S')
-            file_path_string = output_folder + self.folder_symbol + output_string + '-' + current_time_string + '.csv'
+            file_name_str = f"{output_string}-{current_time_string}.csv"
+            file_path_string = str(output_folder / file_name_str)
 
         if filename_override != '':
             file_path_string = filename_override + '-' + output_string + '.csv'
@@ -1039,21 +1047,9 @@ class PhotometryData:
         if output_data in p_list:
             session_temp = self.partial_percent.transpose()
 
-        session_mean = session_temp.mean(axis=0, skipna=True)
-        session_mean = [session_string] + session_mean.tolist()
-        session_mean = pd.Series(session_mean)
-        session_mean = pd.DataFrame(session_mean)
-        session_mean = session_mean.transpose()
-        session_std = session_temp.std(axis=0, skipna=True)
-        session_std = [session_string] + session_std.tolist()
-        session_std = pd.Series(session_std)
-        session_std = pd.DataFrame(session_std)
-        session_std = session_std.transpose()
-        session_sem = session_temp.sem(axis=0, skipna=True)
-        session_sem = [session_string] + session_sem.tolist()
-        session_sem = pd.Series(session_sem)
-        session_sem = pd.DataFrame(session_sem)
-        session_sem = session_sem.transpose()
+        session_mean = pd.DataFrame([[session_string] + session_temp.mean(axis=0, skipna=True).tolist()])
+        session_std = pd.DataFrame([[session_string] + session_temp.std(axis=0, skipna=True).tolist()])
+        session_sem = pd.DataFrame([[session_string] + session_temp.sem(axis=0, skipna=True).tolist()])
 
 
         if os.path.exists(summary_path):
@@ -1089,29 +1085,20 @@ def abet_extract_information(abet_file_path):
     date = ''
     schedule = ''
     abet_file_path = abet_file_path
-    abet_file = open(abet_file_path)
-    abet_csv_reader = csv.reader(abet_file)
     event_time_colname = ['Evnt_Time', 'Event_Time']
-    colnames_found = False
-    for row in abet_csv_reader:
-        if not colnames_found:
-            if len(row) == 0:
+    with open(abet_file_path, 'r', encoding='utf-8') as abet_file:
+        abet_csv_reader = csv.reader(abet_file)
+        for row in abet_csv_reader:
+            if not row:
                 continue
             if row[0] == 'Animal ID':
                 animal_id = str(row[1])
-                continue
-            if row[0] == 'Date/Time':
-                date = str(row[1])
-                date = date.replace(':', '-')
-                date = date.replace('/', '-')
-                continue
-            if (row[0] == 'Schedule') or (row[0] == 'Schedule Name'):
+            elif row[0] == 'Date/Time':
+                date = str(row[1]).replace(':', '-').replace('/', '-')
+            elif (row[0] == 'Schedule') or (row[0] == 'Schedule Name'):
                 schedule = str(row[1])
-            if row[0] in event_time_colname:
-                colnames_found = True
-        else:
-            break
-    abet_file.close()
+            elif row[0] in event_time_colname:
+                break
     return animal_id, date, schedule
 
 def _process_single_file(args):
@@ -1151,7 +1138,7 @@ def _process_single_file(args):
 
     try:
         animal_id, date, _ = abet_extract_information(row['abet_path'])
-    except Exception:
+    except (FileNotFoundError, OSError, IndexError):
         animal_id, date = None, None
 
     event_sheet_df = pd.read_csv(event_sheet_path)
@@ -1183,12 +1170,12 @@ def _process_single_file(args):
         plot_df = photometry_data.get_peri_event_data()
         try:
             plot_df_copy = plot_df.copy(deep=True)
-        except Exception:
+        except (ValueError, TypeError):
             plot_df_copy = pd.DataFrame(plot_df)
 
         try:
             print(f"Processed file={row['abet_path']} behavior={event_row['event_name']} plot_shape={plot_df_copy.shape}")
-        except Exception:
+        except (KeyError, AttributeError):
             print("Processed one result (unable to format debug info)")
 
         file_results.append({
