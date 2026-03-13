@@ -1114,7 +1114,7 @@ def _process_single_file(args):
      trial_start_stage, trial_end_stage,
      iti_prior_trial, center_z, center_method,
      filter_type, filter_name, filter_order, filter_cutoff,
-     fit_type, exclusion_list) = args
+     fit_type, exclusion_list, crop_start, crop_end) = args
 
     row = pd.Series(row_dict)
     file_results = []
@@ -1125,7 +1125,10 @@ def _process_single_file(args):
         row['doric_path'], row['ctrl_col_num'],
         row['act_col_num'], row['ttl_col_num'], row['mode']
     )
-    photometry_data.abet_doric_synchronize()
+    if photometry_data.abet_loaded:
+        photometry_data.abet_doric_synchronize()
+
+    photometry_data.doric_crop(start_time_remove=crop_start, end_time_remove=crop_end)
 
     time_data, filtered_f0, filtered_f = photometry_data.doric_filter(
         filter_type=filter_type,
@@ -1237,6 +1240,16 @@ def process_files(file_sheet_path, event_sheet_path, output_options, config, num
     filter_cutoff = int(config['Photometry_Processing']['filter_cutoff'])
 
     fit_type = config['Photometry_Processing']['fit_type']
+    
+    try:
+        crop_start = float(config['Photometry_Processing'].get('crop_start', '0.0'))
+    except ValueError:
+        crop_start = 0.0
+        
+    try:
+        crop_end = float(config['Photometry_Processing'].get('crop_end', '0.0'))
+    except ValueError:
+        crop_end = 0.0
 
     exclusion_list = [item.strip() for item in config['Filter']['exclusion_list'].split(',')]
 
@@ -1248,7 +1261,7 @@ def process_files(file_sheet_path, event_sheet_path, output_options, config, num
             trial_start_stage, trial_end_stage,
             iti_prior_trial, center_z, center_method,
             filter_type, filter_name, filter_order, filter_cutoff,
-            fit_type, exclusion_list
+            fit_type, exclusion_list, crop_start, crop_end
         )
         for _, row in file_pair_df.iterrows()
     ]
@@ -1288,9 +1301,21 @@ def process_files(file_sheet_path, event_sheet_path, output_options, config, num
     # ------------------------------------------------------------------
     # Aggregate per-behavior combined results
     # ------------------------------------------------------------------
+    # We will compute three types of combined results:
+    # 1. Combined across ALL animals (existing behavior) -> key: 'behavior'
+    # 2. Combined across ALL animals FOR each date -> key: 'behavior (Date: YYYY-MM-DD)'
+    # 3. Longitudinal (difference between sorted dates for SAME animal) -> added natively to results
+    
     combined_results = {}
+    date_combined = {} # Group by (behavior, date)
+    animal_date_map = {} # Group by (behavior, animal_id) -> list of results sorted by date
+    
     for res in results:
         behavior = res['behavior']
+        animal_id = res['animal_id']
+        date = res['date']
+        
+        # 1. Base combination (All Animals)
         if behavior not in combined_results:
             combined_results[behavior] = {
                 "file": "Combined",
@@ -1304,20 +1329,40 @@ def process_files(file_sheet_path, event_sheet_path, output_options, config, num
         
         combined_results[behavior]["auc_list"].append(res["auc"])
         combined_results[behavior]["max_peak_list"].append(res["max_peak"])
-        # res["plot_data"] is a DataFrame where each column is a trial.
-        # We take the mean across all trials for this specific animal/file.
         if not res["plot_data"].empty:
             mean_plot = res["plot_data"].mean(axis=1)
             combined_results[behavior]["plot_data_list"].append(mean_plot)
+            
+        # 2. Date grouping (Combined Animals by Date)
+        if date:
+            date_key = f"{behavior} (Date: {date})"
+            if date_key not in date_combined:
+                date_combined[date_key] = {
+                    "file": f"Combined {date}",
+                    "behavior": date_key,
+                    "animal_id": None,
+                    "date": date,
+                    "auc_list": [],
+                    "max_peak_list": [],
+                    "plot_data_list": []
+                }
+            date_combined[date_key]["auc_list"].append(res["auc"])
+            date_combined[date_key]["max_peak_list"].append(res["max_peak"])
+            if not res["plot_data"].empty:
+                date_combined[date_key]["plot_data_list"].append(mean_plot)
+                
+        # 3. Longitudinal preparation (Group by Animal and Behavior)
+        if animal_id and date:
+            anim_beh_key = (behavior, animal_id)
+            if anim_beh_key not in animal_date_map:
+                animal_date_map[anim_beh_key] = []
+            animal_date_map[anim_beh_key].append(res)
 
+    # Process base combinations
     for behavior, data in combined_results.items():
         if data["auc_list"]:
             data["auc"] = float(np.mean(data["auc_list"]))
             data["max_peak"] = float(np.mean(data["max_peak_list"]))
-            
-            # Combine the mean plot data from each animal into a single DataFrame.
-            # Each entry in plot_data_list is a Series (mean of one animal).
-            # Resulting plot_data will have animals as columns.
             if data["plot_data_list"]:
                 data["plot_data"] = pd.concat(data["plot_data_list"], axis=1)
             else:
@@ -1326,15 +1371,57 @@ def process_files(file_sheet_path, event_sheet_path, output_options, config, num
             data["auc"] = 0
             data["max_peak"] = 0
             data["plot_data"] = pd.DataFrame()
-            
-        # Clean up temporary lists
-        del data["auc_list"]
-        del data["max_peak_list"]
-        del data["plot_data_list"]
-
-    # Append combined sentinel entries so the GUI's existing animal/date
-    # selectors (which look for animal_id == None) keep working.
-    for behavior, data in combined_results.items():
+        del data["auc_list"], data["max_peak_list"], data["plot_data_list"]
         results.append(data)
+        
+    # Process date combinations
+    for date_key, data in date_combined.items():
+        if data["auc_list"]:
+            data["auc"] = float(np.mean(data["auc_list"]))
+            data["max_peak"] = float(np.mean(data["max_peak_list"]))
+            if data["plot_data_list"]:
+                data["plot_data"] = pd.concat(data["plot_data_list"], axis=1)
+            else:
+                data["plot_data"] = pd.DataFrame()
+        else:
+            data["auc"] = 0
+            data["max_peak"] = 0
+            data["plot_data"] = pd.DataFrame()
+        del data["auc_list"], data["max_peak_list"], data["plot_data_list"]
+        results.append(data)
+        
+    # Process longitudinal changes (Day N - Day N-1)
+    for (behavior, animal_id), anim_results in animal_date_map.items():
+        if len(anim_results) > 1:
+            # Sort by date
+            anim_results.sort(key=lambda x: str(x['date']))
+            for i in range(1, len(anim_results)):
+                prev_res = anim_results[i-1]
+                curr_res = anim_results[i]
+                
+                diff_auc = curr_res['auc'] - prev_res['auc']
+                diff_peak = curr_res['max_peak'] - prev_res['max_peak']
+                
+                # Difference the plot data
+                diff_plot_data = pd.DataFrame()
+                if not curr_res['plot_data'].empty and not prev_res['plot_data'].empty:
+                    # try to subtract the mean traces
+                    curr_mean = curr_res['plot_data'].mean(axis=1)
+                    prev_mean = prev_res['plot_data'].mean(axis=1)
+                    diff_series = curr_mean - prev_mean
+                    diff_plot_data = pd.DataFrame({f"Diff {curr_res['date']} - {prev_res['date']}": diff_series})
+                    
+                diff_behavior_key = f"{behavior} (Δ {curr_res['date']} minus {prev_res['date']})"
+                
+                longitudinal_res = {
+                    "file": f"Diff {curr_res['file']} - {prev_res['file']}",
+                    "behavior": diff_behavior_key,
+                    "animal_id": animal_id,
+                    "date": f"{curr_res['date']} - {prev_res['date']}",
+                    "auc": diff_auc,
+                    "max_peak": diff_peak,
+                    "plot_data": diff_plot_data
+                }
+                results.append(longitudinal_res)
 
     return results, combined_results
