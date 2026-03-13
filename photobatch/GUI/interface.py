@@ -11,9 +11,13 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget, Q
 from PySide6.QtCore import Qt, QThread, Signal, QSize
 from PySide6.QtGui import QAction, QIcon, QFont, QCursor
 from functools import partial
+
+# type: ignore
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
 import numpy as np
+import matplotlib.pyplot as plt
 from Processing import data_processor
 from PySide6.QtWidgets import QDialog
 
@@ -884,9 +888,12 @@ class FiberPhotometryApp(QMainWindow):
         self.results_animal_select = QComboBox()
         self.results_animal_select.currentTextChanged.connect(self.update_results_date_select)
         self.results_date_select = QComboBox()
-        self.results_date_select.currentTextChanged.connect(self.update_results_table)
+        self.results_date_select.currentTextChanged.connect(self.update_results_behavior_select)
+        self.results_behavior_select = QComboBox()
+        self.results_behavior_select.currentTextChanged.connect(self.update_results_table)
         controls_layout.addRow("Select Animal ID:", self.results_animal_select)
         controls_layout.addRow("Select Date:", self.results_date_select)
+        controls_layout.addRow("Select Behavior:", self.results_behavior_select)
         layout.addLayout(controls_layout)
 
         self.results_table = QTableWidget()
@@ -915,26 +922,76 @@ class FiberPhotometryApp(QMainWindow):
         
         controls_layout = QFormLayout()
         # Visualization: choose by Animal ID and Date instead of file
-        self.vis_animal_select = QComboBox()
-        self.vis_date_select = QComboBox()
+        self.vis_animal_select = MultiSelectComboBox()
+        self.vis_animal_select.list_widget.itemChanged.connect(self.update_vis_date_select)
+        
+        self.vis_animal_treatment = QComboBox()
+        self.vis_animal_treatment.addItems(["Combine", "Separate Lines", "Separate Subplots"])
+        
+        self.vis_date_select = MultiSelectComboBox()
+        self.vis_date_select.list_widget.itemChanged.connect(self.update_vis_behavior_select)
+        
+        self.vis_date_treatment = QComboBox()
+        self.vis_date_treatment.addItems(["Combine", "Separate Lines", "Separate Subplots"])
+        
+        self.vis_behavior_select = MultiSelectComboBox()
+        
+        self.vis_behavior_treatment = QComboBox()
+        self.vis_behavior_treatment.addItems(["Combine", "Separate Lines", "Separate Subplots"])
+        
         # populate selects from any existing results
         self.update_animal_date_selects()
-        self.vis_behavior_select = QComboBox()
-        self.vis_animal_select.currentTextChanged.connect(self.update_vis_date_select)
-        self.vis_date_select.currentTextChanged.connect(self.update_vis_behavior_select)
         
-        self.event_prior_input = QLineEdit(self.config['Event_Window']['event_prior'])
+        self.event_prior_input = QLineEdit(self.config['Event_Window'].get('event_prior', '5.0'))
         self.event_prior_input.setDisabled(True)
-        self.event_follow_input = QLineEdit(self.config['Event_Window']['event_follow'])
+        self.event_follow_input = QLineEdit(self.config['Event_Window'].get('event_follow', '10.0'))
         self.event_follow_input.setDisabled(True)
         
         # Visualization mode selector
         self.vis_mode_select = QComboBox()
         self.vis_mode_select.addItems(["Histogram", "Heatmap"])
-        controls_layout.addRow("Select Animal ID:", self.vis_animal_select)
-        controls_layout.addRow("Select Date:", self.vis_date_select)
-        controls_layout.addRow("Select Behavior:", self.vis_behavior_select)
-        controls_layout.addRow("Visualization Mode:", self.vis_mode_select)
+        
+        # Color Scheme selector
+        self.vis_color_scheme = QComboBox()
+        self.vis_color_scheme.addItems(["Default", "Viridis", "Plasma", "Inferno", "Magma", "Cividis", "Coolwarm"])
+        
+        animal_layout = QHBoxLayout()
+        animal_layout.addWidget(self.vis_animal_select, 2)
+        animal_layout.addWidget(self.vis_animal_treatment, 1)
+        controls_layout.addRow("Select Animal ID:", animal_layout)
+        
+        date_layout = QHBoxLayout()
+        date_layout.addWidget(self.vis_date_select, 2)
+        date_layout.addWidget(self.vis_date_treatment, 1)
+        controls_layout.addRow("Select Date:", date_layout)
+        
+        behavior_layout = QHBoxLayout()
+        behavior_layout.addWidget(self.vis_behavior_select, 2)
+        behavior_layout.addWidget(self.vis_behavior_treatment, 1)
+        controls_layout.addRow("Select Behavior:", behavior_layout)
+        
+        display_layout = QHBoxLayout()
+        display_layout.addWidget(self.vis_mode_select, 1)
+        display_layout.addWidget(QLabel("Color Scheme:"), 0)
+        display_layout.addWidget(self.vis_color_scheme, 1)
+        controls_layout.addRow("Display Options:", display_layout)
+        
+        # Axis Limits
+        axes_layout = QHBoxLayout()
+        axes_layout.addWidget(QLabel("X Min:"))
+        self.vis_x_min = QLineEdit()
+        axes_layout.addWidget(self.vis_x_min)
+        axes_layout.addWidget(QLabel("X Max:"))
+        self.vis_x_max = QLineEdit()
+        axes_layout.addWidget(self.vis_x_max)
+        
+        axes_layout.addWidget(QLabel("Y Min:"))
+        self.vis_y_min = QLineEdit()
+        axes_layout.addWidget(self.vis_y_min)
+        axes_layout.addWidget(QLabel("Y Max:"))
+        self.vis_y_max = QLineEdit()
+        axes_layout.addWidget(self.vis_y_max)
+        controls_layout.addRow("Manual Axis Limits:", axes_layout)
         
         generate_plot_button = QPushButton("Generate Plot")
         generate_plot_button.clicked.connect(self.generate_plot)
@@ -943,6 +1000,9 @@ class FiberPhotometryApp(QMainWindow):
         layout.addWidget(generate_plot_button)
         
         self.canvas = MatplotlibCanvas(self, width=5, height=4, dpi=100)
+        self.toolbar = NavigationToolbar(self.canvas, self)
+        
+        layout.addWidget(self.toolbar)
         layout.addWidget(self.canvas)
         
         save_layout = QHBoxLayout()
@@ -997,68 +1057,100 @@ class FiberPhotometryApp(QMainWindow):
 
         # Update Visualization selectors if present
         if hasattr(self, 'vis_animal_select') and hasattr(self, 'vis_date_select'):
-            self.vis_animal_select.blockSignals(True)
-            self.vis_date_select.blockSignals(True)
-            self.vis_animal_select.clear()
+            self.vis_animal_select.list_widget.clear()
+            self.vis_animal_select.add_option('All')
+            
             if combined_exists:
-                self.vis_animal_select.addItem('Combined')
+                self.vis_animal_select.add_option('Combined')
             for a in animals:
-                self.vis_animal_select.addItem(a)
-            self.vis_date_select.clear()
-            self.vis_animal_select.blockSignals(False)
-            self.vis_date_select.blockSignals(False)
-            # Manually trigger the vis date + behavior cascade
-            current_vis_animal = self.vis_animal_select.currentText()
-            if current_vis_animal:
-                self.update_vis_date_select(current_vis_animal)
+                self.vis_animal_select.add_option(str(a))
+                
+            self.vis_date_select.list_widget.clear()
+            self.update_vis_date_select()
 
-    def update_vis_date_select(self, animal):
+    def update_vis_date_select(self, *_):
         """Populate the visualization date select when the animal selection changes."""
-        self.vis_date_select.clear()
-        if not animal or not self.analysis_results:
+        self.vis_date_select.list_widget.clear()
+        selected_animals = self.vis_animal_select.get_checked_items() if hasattr(self, 'vis_animal_select') else []
+        if not selected_animals or not self.analysis_results:
             return
-        if animal == 'Combined':
-            self.vis_date_select.addItem('Combined')
-            # Trigger behavior refresh
-            self.update_vis_behavior_select()
-            return
-        # collect dates for this animal
-        dates = sorted({res.get('date') for res in self.analysis_results if res.get('animal_id') == animal and res.get('date')})
-        # allow viewing all dates for the animal
-        self.vis_date_select.addItem('All')
-        for d in dates:
-            self.vis_date_select.addItem(d)
+        
+        dates = set()
+        for res in self.analysis_results:
+            a = res.get('animal_id')
+            if a is None: a = 'Combined'
+            if 'All' in selected_animals or a in selected_animals:
+                d = res.get('date')
+                if d is None: d = 'All'
+                dates.add(d)
+
+        # allow viewing all dates for the animal by adding options
+        self.vis_date_select.add_option('All')
+        for d in sorted(dates):
+            if d != 'All':
+                self.vis_date_select.add_option(str(d))
         self.update_vis_behavior_select()
 
-    def update_results_date_select(self, animal):
+    def update_results_date_select(self, animal: str):
         """Populate the results date select when the results animal selection changes."""
         self.results_date_select.clear()
         if not animal or not self.analysis_results:
             return
         if animal == 'Combined':
             self.results_date_select.addItem('Combined')
-            self.update_results_table()
+            self.update_results_behavior_select()
             return
         dates = sorted({res.get('date') for res in self.analysis_results if res.get('animal_id') == animal and res.get('date')})
         self.results_date_select.addItem('All')
         for d in dates:
-            self.results_date_select.addItem(d)
+            self.results_date_select.addItem(str(d))
+        self.update_results_behavior_select()
+
+    def update_results_behavior_select(self, *_):
+        """Populate the results behavior select based on animal and date selections."""
+        self.results_behavior_select.clear()
+        selected_animal = self.results_animal_select.currentText() if hasattr(self, 'results_animal_select') else ''
+        selected_date = self.results_date_select.currentText() if hasattr(self, 'results_date_select') else ''
+        
+        if not selected_animal or not self.analysis_results:
+            return
+        
+        def matches(res):
+            a = res.get('animal_id')
+            d = res.get('date')
+            if selected_animal == 'Combined':
+                if a:
+                    return False
+            else:
+                if a != selected_animal:
+                    return False
+            if selected_date and selected_date not in ['All', 'Combined']:
+                return d == selected_date
+            return True
+            
+        behaviors = sorted(list({res.get('behavior') for res in self.analysis_results if matches(res) and res.get('behavior')}))
+        self.results_behavior_select.addItem('All')
+        for b in behaviors:
+            self.results_behavior_select.addItem(str(b))
         self.update_results_table()
 
     def update_results_table(self):
         selected_animal = self.results_animal_select.currentText() if hasattr(self, 'results_animal_select') else ''
         selected_date = self.results_date_select.currentText() if hasattr(self, 'results_date_select') else ''
+        selected_behavior = self.results_behavior_select.currentText() if hasattr(self, 'results_behavior_select') else ''
+        
         if not selected_animal or not self.analysis_results:
             self.results_table.clear()
             self.results_table.setRowCount(0)
             self.results_table.setColumnCount(0)
             return
 
-        # Filter results for the selected animal and date
+        # Filter results for the selected animal, date, and behavior
         def matches_selection(res):
-            # Combined entries in analysis_results are the ones missing an animal_id
             res_animal = res.get('animal_id')
             res_date = res.get('date')
+            res_behavior = res.get('behavior')
+            
             if selected_animal == 'Combined':
                 if res_animal:
                     return False
@@ -1066,157 +1158,262 @@ class FiberPhotometryApp(QMainWindow):
                 if res_animal != selected_animal:
                     return False
             if selected_date and selected_date not in ['Combined', 'All']:
-                return res_date == selected_date
+                if res_date != selected_date:
+                    return False
+            if selected_behavior and selected_behavior != 'All':
+                if res_behavior != selected_behavior:
+                    return False
             return True
 
         filtered_results = [res for res in self.analysis_results if matches_selection(res)]
 
+        # Determine dynamic columns
+        include_animal = (selected_animal == 'Combined')
+        include_date = (selected_date in ['Combined', 'All'])
+        
+        columns = []
+        if include_animal:
+            columns.append('Animal')
+        if include_date:
+            columns.append('Date')
+        columns.extend(['Behavior', 'Max Peak', 'AUC'])
+
         self.results_table.setRowCount(len(filtered_results))
-        self.results_table.setColumnCount(3) # Behavior, Max Peak, AUC
-        self.results_table.setHorizontalHeaderLabels(['Behavior', 'Max Peak', 'AUC'])
+        self.results_table.setColumnCount(len(columns))
+        self.results_table.setHorizontalHeaderLabels(columns)
+        
         for i, res in enumerate(filtered_results):
-            self.results_table.setItem(i, 0, QTableWidgetItem(str(res.get('behavior', ''))))
+            col_idx = 0
+            if include_animal:
+                self.results_table.setItem(i, col_idx, QTableWidgetItem(str(res.get('animal_id', 'Combined'))))
+                col_idx += 1
+            if include_date:
+                self.results_table.setItem(i, col_idx, QTableWidgetItem(str(res.get('date', 'All'))))
+                col_idx += 1
+                
+            self.results_table.setItem(i, col_idx, QTableWidgetItem(str(res.get('behavior', ''))))
+            col_idx += 1
             max_peak = res.get('max_peak')
             auc = res.get('auc')
-            self.results_table.setItem(i, 1, QTableWidgetItem(
-                f"{float(max_peak):.4f}" if max_peak is not None else 'N/A'))
-            self.results_table.setItem(i, 2, QTableWidgetItem(
-                f"{float(auc):.4f}" if auc is not None else 'N/A'))
+            self.results_table.setItem(i, col_idx, QTableWidgetItem(f"{float(max_peak):.4f}" if max_peak is not None else 'N/A'))
+            col_idx += 1
+            self.results_table.setItem(i, col_idx, QTableWidgetItem(f"{float(auc):.4f}" if auc is not None else 'N/A'))
+            
         self.results_table.resizeColumnsToContents()
 
     def update_vis_file_select(self):
         # legacy helper left for compatibility; delegate to animal/date selector updater
         self.update_animal_date_selects()
 
-    def update_vis_behavior_select(self):
-        self.vis_behavior_select.clear()
-        selected_animal = self.vis_animal_select.currentText() if hasattr(self, 'vis_animal_select') else ''
-        selected_date = self.vis_date_select.currentText() if hasattr(self, 'vis_date_select') else ''
-        if not selected_animal or not self.analysis_results:
+    def update_vis_behavior_select(self, *_):
+        self.vis_behavior_select.list_widget.clear()
+        selected_animals = self.vis_animal_select.get_checked_items() if hasattr(self, 'vis_animal_select') else []
+        selected_dates = self.vis_date_select.get_checked_items() if hasattr(self, 'vis_date_select') else []
+        
+        if not selected_animals or not selected_dates or not self.analysis_results:
             return
 
         def matches(res):
             a = res.get('animal_id')
+            if a is None: a = 'Combined'
             d = res.get('date')
-            if selected_animal == 'Combined':
-                if a:
-                    return False
-            else:
-                if a != selected_animal:
-                    return False
-            if selected_date and selected_date not in ['All', 'Combined']:
-                return d == selected_date
+            if d is None: d = 'All'
+            if 'All' not in selected_animals and a not in selected_animals:
+                return False
+            if 'All' not in selected_dates and str(d) not in selected_dates:
+                return False
             return True
 
-        behaviors = sorted(list(set([res['behavior'] for res in self.analysis_results if matches(res)])))
-        self.vis_behavior_select.addItems(behaviors)
+        behaviors = sorted(list({res.get('behavior') for res in self.analysis_results if matches(res) and res.get('behavior')}))
+        self.vis_behavior_select.add_option('All')
+        for b in behaviors:
+            self.vis_behavior_select.add_option(str(b))
 
     def generate_plot(self):
-        selected_animal = self.vis_animal_select.currentText() if hasattr(self, 'vis_animal_select') else ''
-        selected_date = self.vis_date_select.currentText() if hasattr(self, 'vis_date_select') else ''
-        behavior = self.vis_behavior_select.currentText()
-        event_prior = float(self.event_prior_input.text())
-        event_follow = float(self.event_follow_input.text())
-        vis_mode = self.vis_mode_select.currentText().lower() if hasattr(self, 'vis_mode_select') else 'histogram'
-
-        # Find the data in self.analysis_results that matches the selected animal/date and behavior
-        def matches(res):
-            a = res.get('animal_id')
-            d = res.get('date')
-            if selected_animal == 'Combined':
-                if a:
-                    return False
-            else:
-                if a != selected_animal:
-                    return False
-            if selected_date and selected_date not in ['All', 'Combined']:
-                return d == selected_date
-            return res.get('behavior') == behavior
-
-        result_data = next((res for res in self.analysis_results if matches(res) and res.get('behavior') == behavior), None)
-
-        if result_data and not result_data['plot_data'].empty:
-            self.plot_data = result_data['plot_data']
-        else:
-            self.canvas.axes.clear()
-            self.canvas.draw()
-            QMessageBox.warning(self, "Data Not Found", f"No data matches the selected file and behavior, or the data is empty.")
+        # Extract selections from MultiSelectComboBox
+        selected_animals = self.vis_animal_select.get_checked_items() if hasattr(self, 'vis_animal_select') else []
+        selected_dates = self.vis_date_select.get_checked_items() if hasattr(self, 'vis_date_select') else []
+        selected_behaviors = self.vis_behavior_select.get_checked_items() if hasattr(self, 'vis_behavior_select') else []
+        
+        if not selected_behaviors:
+            QMessageBox.warning(self, "Selection Error", "Please select at least one behavior to plot.")
             return
 
-        # Clear the canvas and re-add axes before plotting
+        try:
+            event_prior = float(self.event_prior_input.text() or 5.0)
+            event_follow = float(self.event_follow_input.text() or 10.0)
+        except ValueError:
+            event_prior, event_follow = 5.0, 10.0
+
+        vis_mode = self.vis_mode_select.currentText().lower() if hasattr(self, 'vis_mode_select') else 'histogram'
+        color_scheme = self.vis_color_scheme.currentText().lower() if hasattr(self, 'vis_color_scheme') else 'default'
+        
+        if color_scheme == "default":
+            cmap = plt.get_cmap("tab10")
+        else:
+            try:
+                cmap = plt.get_cmap(color_scheme)
+            except ValueError:
+                cmap = plt.get_cmap("tab10")
+
+        matched_results = []
+        for a in selected_animals:
+            for d in selected_dates:
+                for b in selected_behaviors:
+                    for res in self.analysis_results:
+                        res_a = res.get('animal_id')
+                        if res_a is None: res_a = 'Combined'
+                        res_d = res.get('date')
+                        if res_d is None: res_d = 'All'
+                        res_b = res.get('behavior', '')
+                        
+                        if a != 'All':
+                            if a == 'Combined' and res.get('animal_id') is not None: continue
+                            if a != 'Combined' and res_a != a: continue
+                        
+                        if d != 'All' and str(res_d) != d:
+                            continue
+                            
+                        if res_b != b:
+                            continue
+                            
+                        if not res.get('plot_data').empty:
+                            matched_results.append({
+                                'animal': a,
+                                'date': d,
+                                'behavior': b,
+                                'data': res['plot_data']
+                            })
+                        break # Only need first matching for this combination
+
+        if not matched_results:
+            self.canvas.axes.clear()
+            self.canvas.draw()
+            QMessageBox.warning(self, "Data Not Found", f"No data matches the selected criteria or the data is empty.")
+            return
+
+        # Store first plot data so save functionality works as expected for simple cases
+        self.plot_data = matched_results[0]['data']
+
         self.canvas.figure.clf()
-        self.canvas.axes = self.canvas.figure.add_subplot(111)
-        time_axis = np.linspace(-event_prior, event_follow, len(self.plot_data.index))
-
-        if vis_mode == 'histogram':
-            # Check if this is a Combined/Diff dataset by looking at the dataframe columns.
-            # Usually, for a single animal/date, columns are trials (0, 1, 2...).
-            # For Combined/Diff data, columns are animal IDs or Diff labels.
-            self.canvas.axes.axvline(x=0, color='r', linestyle='--')
+        
+        # Check treatments
+        animal_treatment = self.vis_animal_treatment.currentText()
+        date_treatment = self.vis_date_treatment.currentText()
+        behavior_treatment = self.vis_behavior_treatment.currentText()
+        
+        # Determine number of subplots
+        subplots_needed = 1
+        subplot_groups = {} # group results by their subplot index
+        group_keys = []
+        
+        for res in matched_results:
+            # Create a tuple representing which subplot this result belongs to
+            sp_key = []
+            if animal_treatment == "Separate Subplots": sp_key.append(res['animal'])
+            if date_treatment == "Separate Subplots": sp_key.append(res['date'])
+            if behavior_treatment == "Separate Subplots": sp_key.append(res['behavior'])
             
-            if selected_animal == 'Combined':
-                # Plot mean and SEM across all animals in the combined dataset
-                mean_data = self.plot_data.mean(axis=1)
-                sem_data = self.plot_data.sem(axis=1)
-                self.canvas.axes.plot(time_axis, mean_data, label='Combined Mean', color='black', linewidth=2)
-                self.canvas.axes.fill_between(time_axis, mean_data - sem_data, mean_data + sem_data, alpha=0.2, color='gray', label='SEM')
+            sp_key = tuple(sp_key)
+            if sp_key not in subplot_groups:
+                subplot_groups[sp_key] = []
+                group_keys.append(sp_key)
+            subplot_groups[sp_key].append(res)
+            
+        subplots_needed = max(1, len(subplot_groups))
+        
+        # Create columns/rows for subplots
+        cols = 1
+        if subplots_needed > 1:
+            cols = 2 if subplots_needed % 2 == 0 or subplots_needed > 3 else 1
+        rows = (subplots_needed + cols - 1) // cols
+        
+        for idx, (sp_key, Group) in enumerate(subplot_groups.items()):
+            ax = self.canvas.figure.add_subplot(rows, cols, idx + 1)
+            if idx == 0:
+                self.canvas.axes = ax # Set primary axes
                 
-                # Optionally, plot individual animal traces lightly in the background
-                for col in self.plot_data.columns:
-                    self.canvas.axes.plot(time_axis, self.plot_data[col], alpha=0.3, linewidth=1, label=f'Animal {col}')
+            if vis_mode == 'histogram':
+                ax.axvline(x=0, color='r', linestyle='--')
+                for j, res in enumerate(Group):
+                    data = res['data']
+                    label_parts = []
+                    if animal_treatment != "Combine" and res['animal'] != 'All': label_parts.append(res['animal'])
+                    if date_treatment != "Combine" and res['date'] != 'All': label_parts.append(res['date'])
+                    if behavior_treatment != "Combine": label_parts.append(res['behavior'])
+                    label = " | ".join(label_parts) if label_parts else "Mean"
                     
-            elif behavior.startswith(f"{behavior.split(' (')[0]} (Δ"):
-                # Longitudinal difference plot
-                for col in self.plot_data.columns:
-                    self.canvas.axes.plot(time_axis, self.plot_data[col], linewidth=2, label=str(col))
+                    time_axis = np.linspace(-event_prior, event_follow, len(data.index))
+                    c_idx = (idx * 5 + j) % cmap.N
+                    if res['animal'] == 'Combined' or res['date'] == 'All':
+                        mean_data = data.mean(axis=1)
+                        sem_data = data.sem(axis=1)
+                        ax.plot(time_axis, mean_data, label=label, linewidth=2, color=cmap(c_idx))
+                        ax.fill_between(time_axis, mean_data - sem_data, mean_data + sem_data, alpha=0.2, color=cmap(c_idx))
+                    elif ' (Δ' in res['behavior']:
+                        for col in data.columns:
+                            ax.plot(time_axis, data[col], linewidth=2, label=str(col))
+                    else:
+                        mean_data = data.mean(axis=1)
+                        sem_data = data.sem(axis=1)
+                        ax.plot(time_axis, mean_data, label=label, color=cmap(c_idx))
+                        ax.fill_between(time_axis, mean_data - sem_data, mean_data + sem_data, alpha=0.2, color=cmap(c_idx))
                 
-            else:
-                # Regular single animal/date plot
-                mean_data = self.plot_data.mean(axis=1)
-                sem_data = self.plot_data.sem(axis=1)
-                self.canvas.axes.plot(time_axis, mean_data, label='Mean', color='blue')
-                self.canvas.axes.fill_between(time_axis, mean_data - sem_data, mean_data + sem_data, alpha=0.2, color='blue', label='SEM')
+                ax.set_xlabel("Time (s)")
+                ax.set_ylabel("Signal")
+                title_parts = [str(k) for k in sp_key] if sp_key else ["Perievent Histogram"]
+                ax.set_title(" - ".join(title_parts))
+                if len(ax.get_legend_handles_labels()[0]) > 0:
+                    if len(ax.get_legend_handles_labels()[0]) > 6:
+                        ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize='small')
+                    else:
+                        ax.legend()
+                        
+            elif vis_mode == 'heatmap':
+                # Just plot the first one in the group forheatmap since combining them on 1 heatmap is harder
+                res = Group[0]
+                data = res['data'].T.values 
+                im = ax.imshow(data, aspect='auto', cmap=color_scheme.lower() if color_scheme != 'default' else 'viridis',
+                               extent=[-event_prior, event_follow, data.shape[0], 0])
+                ax.axvline(x=0, color='r', linestyle='--')
+                ax.set_xlabel("Time (s)")
+                
+                if res['animal'] == 'Combined':
+                    ax.set_ylabel("Subject/Animal")
+                    if data.shape[0] <= 15:
+                        ax.set_yticks(np.arange(data.shape[0]) + 0.5)
+                        ax.set_yticklabels(res['data'].columns)
+                elif ' (Δ' in res['behavior']:
+                    ax.set_ylabel("Difference Trace")
+                    ax.set_yticks([0.5])
+                    ax.set_yticklabels([res['data'].columns[0]])
+                else:
+                    ax.set_ylabel("Event Instance (Trial)")
+                    
+                title_parts = [str(k) for k in sp_key] if sp_key else [res['behavior']]
+                ax.set_title(" Heatmap - ".join(title_parts))
+                
+                from mpl_toolkits.axes_grid1 import make_axes_locatable
+                divider = make_axes_locatable(ax)
+                cax = divider.append_axes("right", size="5%", pad=0.05)
+                cbar = self.canvas.figure.colorbar(im, cax=cax)
+                cbar.set_label("Signal")
+                
+        # Apply Manual Axis Limits
+        if hasattr(self, 'vis_y_min') and self.vis_y_min.text() and vis_mode != 'heatmap':
+            try: ax.set_ylim(bottom=float(self.vis_y_min.text()))
+            except ValueError: pass
+        if hasattr(self, 'vis_y_max') and self.vis_y_max.text() and vis_mode != 'heatmap':
+            try: ax.set_ylim(top=float(self.vis_y_max.text()))
+            except ValueError: pass
+        if hasattr(self, 'vis_x_min') and self.vis_x_min.text():
+            try: ax.set_xlim(left=float(self.vis_x_min.text()))
+            except ValueError: pass
+        if hasattr(self, 'vis_x_max') and self.vis_x_max.text():
+            try: ax.set_xlim(right=float(self.vis_x_max.text()))
+            except ValueError: pass
 
-            self.canvas.axes.set_xlabel("Time (s)")
-            self.canvas.axes.set_ylabel("Signal")
-            self.canvas.axes.set_title(f"Perievent Histogram for {behavior}")
-            
-            # Put legend outside if it has too many items
-            if len(self.canvas.axes.get_legend_handles_labels()[0]) > 6:
-                self.canvas.axes.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize='small')
-                self.canvas.figure.tight_layout()
-            else:
-                self.canvas.axes.legend()
-        elif vis_mode == 'heatmap':
-            # For heatmaps with combined data, show animals/subjects on y-axis
-            data = self.plot_data.T.values  # shape: (n_events/subjects, n_timepoints)
-            im = self.canvas.axes.imshow(data, aspect='auto', cmap='viridis',
-                                         extent=[-event_prior, event_follow, data.shape[0], 0])
-            self.canvas.axes.axvline(x=0, color='r', linestyle='--')
-            self.canvas.axes.set_xlabel("Time (s)")
-            
-            if selected_animal == 'Combined':
-                self.canvas.axes.set_ylabel("Subject/Animal")
-                # Set y-ticks to be the animal IDs if not too many
-                if data.shape[0] <= 15:
-                    self.canvas.axes.set_yticks(np.arange(data.shape[0]) + 0.5)
-                    self.canvas.axes.set_yticklabels(self.plot_data.columns)
-            elif behavior.startswith(f"{behavior.split(' (')[0]} (Δ"):
-                self.canvas.axes.set_ylabel("Difference Trace")
-                self.canvas.axes.set_yticks([0.5])
-                self.canvas.axes.set_yticklabels([self.plot_data.columns[0]])
-            else:
-                self.canvas.axes.set_ylabel("Event Instance (Trial)")
-                
-            self.canvas.axes.set_title(f"Perievent Heatmap for {behavior}")
-            
-            # Since tight_layout might be applied above, handle colorbar carefully
-            from mpl_toolkits.axes_grid1 import make_axes_locatable
-            divider = make_axes_locatable(self.canvas.axes)
-            cax = divider.append_axes("right", size="5%", pad=0.05)
-            cbar = self.canvas.figure.colorbar(im, cax=cax)
-            cbar.set_label("Signal")
-            self.canvas.figure.tight_layout()
+        self.canvas.figure.tight_layout()
         self.canvas.draw()
 
     def save_plot_data(self):
