@@ -1339,7 +1339,7 @@ def process_files(file_sheet_path, event_sheet_path, output_options, config, num
             if date_key not in date_combined:
                 date_combined[date_key] = {
                     "file": f"Combined {date}",
-                    "behavior": date_key,
+                    "behavior": behavior,
                     "animal_id": None,
                     "date": date,
                     "auc_list": [],
