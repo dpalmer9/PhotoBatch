@@ -15,12 +15,211 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import numpy as np
 from Processing import data_processor
+from PySide6.QtWidgets import QDialog
 
 class MatplotlibCanvas(FigureCanvas):
     def __init__(self, parent=None, width=5, height=4, dpi=100):
         fig = Figure(figsize=(width, height), dpi=dpi)
         self.axes = fig.add_subplot(111)
+        fig.tight_layout()
         super(MatplotlibCanvas, self).__init__(fig)
+
+class PhotometryPreviewWindow(QDialog):
+    def __init__(self, config, file_pair_data, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Photometry Preview Window")
+        self.resize(1000, 800)
+        self.config = config
+        self.file_pair_data = file_pair_data
+        
+        main_layout = QHBoxLayout(self)
+        
+        # Left side controls
+        controls_layout = QVBoxLayout()
+        controls_form = QFormLayout()
+        
+        self.file_select = QComboBox()
+        self.populate_file_options()
+        controls_form.addRow("Select Doric File:", self.file_select)
+        
+        self.filter_type = QComboBox()
+        self.filter_type.addItems(['lowpass', 'smoothing'])
+        self.filter_type.setCurrentText(self.config['Photometry_Processing'].get('filter_type', 'lowpass'))
+        controls_form.addRow("Filter Type:", self.filter_type)
+        
+        self.filter_name = QComboBox()
+        self.update_filter_name_options()
+        self.filter_name.setCurrentText(self.config['Photometry_Processing'].get('filter_name', 'butter'))
+        controls_form.addRow("Filter Name:", self.filter_name)
+        
+        self.filter_type.currentTextChanged.connect(self.update_filter_name_options)
+        
+        self.filter_order = QSpinBox()
+        self.filter_order.setRange(1, 10)
+        self.filter_order.setValue(int(self.config['Photometry_Processing'].get('filter_order', '4')))
+        controls_form.addRow("Filter/Savgol Order:", self.filter_order)
+        
+        self.filter_cutoff = QSpinBox()
+        self.filter_cutoff.setRange(1, 1000)
+        self.filter_cutoff.setValue(int(self.config['Photometry_Processing'].get('filter_cutoff', '10')))
+        controls_form.addRow("Cutoff/Savgol Window:", self.filter_cutoff)
+        
+        self.crop_start = QLineEdit(self.config['Photometry_Processing'].get('crop_start', '0.0'))
+        controls_form.addRow("Crop Start (s):", self.crop_start)
+        
+        self.crop_end = QLineEdit(self.config['Photometry_Processing'].get('crop_end', '0.0'))
+        controls_form.addRow("Crop End (s):", self.crop_end)
+        
+        self.fit_type = QComboBox()
+        self.fit_type.addItems(['linear', 'expodecay', 'arpls'])
+        self.fit_type.setCurrentText(self.config['Photometry_Processing'].get('fit_type', 'linear'))
+        controls_form.addRow("Fit Type:", self.fit_type)
+        
+        self.arpls_lambda = QLineEdit(self.config['Photometry_Processing'].get('arpls_lambda', '1e5'))
+        controls_form.addRow("arPLS Lambda:", self.arpls_lambda)
+        
+        controls_layout.addLayout(controls_form)
+        
+        self.update_btn = QPushButton("Update Preview")
+        self.update_btn.clicked.connect(self.update_preview)
+        controls_layout.addWidget(self.update_btn)
+        controls_layout.addStretch()
+        
+        # Right side plots
+        plots_layout = QVBoxLayout()
+        self.raw_canvas = MatplotlibCanvas(self, width=6, height=3)
+        self.filtered_canvas = MatplotlibCanvas(self, width=6, height=3)
+        self.fitted_canvas = MatplotlibCanvas(self, width=6, height=3)
+        
+        plots_layout.addWidget(QLabel("Raw Data (Isobestic and Active)"))
+        plots_layout.addWidget(self.raw_canvas)
+        plots_layout.addWidget(QLabel("Filtered Data"))
+        plots_layout.addWidget(self.filtered_canvas)
+        plots_layout.addWidget(QLabel("Filtered & Fitted Data (Delta F/F)"))
+        plots_layout.addWidget(self.fitted_canvas)
+        
+        main_layout.addLayout(controls_layout, 1)
+        main_layout.addLayout(plots_layout, 3)
+        
+    def populate_file_options(self):
+        if self.file_pair_data is not None and not self.file_pair_data.empty:
+            for index, row in self.file_pair_data.iterrows():
+                doric_path = row.get('doric_path')
+                if pd.notna(doric_path):
+                    self.file_select.addItem(str(doric_path), userData=row.to_dict())
+                    
+    def update_filter_name_options(self):
+        self.filter_name.clear()
+        if self.filter_type.currentText() == 'lowpass':
+            self.filter_name.addItems(['butter', 'bessel', 'chebychev'])
+        elif self.filter_type.currentText() == 'smoothing':
+            self.filter_name.addItem('savitsky-golay')
+            
+    def update_preview(self):
+        import traceback
+        try:
+            row_dict = self.file_select.currentData()
+            if not row_dict:
+                QMessageBox.warning(self, "No file selected", "Please select a valid doric file from the dropdown.")
+                return
+            
+            self.update_btn.setText("Updating...")
+            self.update_btn.setEnabled(False)
+            QApplication.processEvents()
+            
+            photometry_data = data_processor.PhotometryData()
+            
+            # Optionally load ABET to synchronize if available
+            abet_path = row_dict.get('abet_path')
+            if pd.notna(abet_path) and os.path.exists(abet_path):
+                 photometry_data.load_abet_data(abet_path)
+            
+            doric_path = row_dict.get('doric_path')
+            if not pd.notna(doric_path) or not os.path.exists(doric_path):
+                 QMessageBox.warning(self, "File Error", "Doric path is invalid or file does not exist.")
+                 self.reset_button()
+                 return
+                 
+            photometry_data.load_doric_data(
+                doric_path,
+                row_dict.get('ctrl_col_num'),
+                row_dict.get('act_col_num'),
+                row_dict.get('ttl_col_num'),
+                row_dict.get('mode')
+            )
+            
+            if photometry_data.abet_loaded:
+                photometry_data.abet_doric_synchronize()
+                
+            try:
+                crop_start_val = float(self.crop_start.text())
+            except ValueError:
+                crop_start_val = 0.0
+                
+            try:
+                crop_end_val = float(self.crop_end.text())
+            except ValueError:
+                crop_end_val = 0.0
+                
+            photometry_data.doric_crop(start_time_remove=crop_start_val, end_time_remove=crop_end_val)
+            
+            # Plot Raw
+            self.raw_canvas.axes.clear()
+            if not photometry_data.doric_pandas.empty:
+                time_raw = photometry_data.doric_pandas['Time']
+                self.raw_canvas.axes.plot(time_raw, photometry_data.doric_pandas['Control'], label='Control (Isobestic)', alpha=0.7)
+                self.raw_canvas.axes.plot(time_raw, photometry_data.doric_pandas['Active'], label='Active', alpha=0.7)
+                self.raw_canvas.axes.legend()
+                self.raw_canvas.axes.set_xlabel('Time (s)')
+                self.raw_canvas.axes.set_ylabel('Fluorescence')
+            self.raw_canvas.draw()
+            
+            # Filter
+            time_data, filtered_f0, filtered_f = photometry_data.doric_filter(
+                filter_type=self.filter_type.currentText(),
+                filter_name=self.filter_name.currentText(),
+                filter_order=self.filter_order.value(),
+                filter_cutoff=self.filter_cutoff.value()
+            )
+            
+            # Plot Filtered
+            self.filtered_canvas.axes.clear()
+            self.filtered_canvas.axes.plot(time_data, filtered_f0, label='Filtered Control', alpha=0.8)
+            self.filtered_canvas.axes.plot(time_data, filtered_f, label='Filtered Active', alpha=0.8)
+            self.filtered_canvas.axes.legend()
+            self.filtered_canvas.axes.set_xlabel('Time (s)')
+            self.filtered_canvas.axes.set_ylabel('Fluorescence')
+            self.filtered_canvas.draw()
+            
+            # Fit
+            # Temporarily set arpls lambda if arpls
+            orig_lambda = photometry_data.config['Photometry_Processing'].get('arpls_lambda') if hasattr(photometry_data, 'config') else None
+            if not hasattr(photometry_data, 'config'):
+                photometry_data.config = {'Photometry_Processing': {}}
+            photometry_data.config['Photometry_Processing']['arpls_lambda'] = self.arpls_lambda.text()
+            
+            photometry_data.doric_fit(self.fit_type.currentText(), filtered_f0, filtered_f, time_data)
+            
+            # Plot Fitted
+            self.fitted_canvas.axes.clear()
+            if not photometry_data.doric_pd.empty:
+                time_fit = photometry_data.doric_pd['Time']
+                deltaf = photometry_data.doric_pd['DeltaF']
+                self.fitted_canvas.axes.plot(time_fit, deltaf, color='green', label='Delta F/F')
+                self.fitted_canvas.axes.legend()
+                self.fitted_canvas.axes.set_xlabel('Time (s)')
+                self.fitted_canvas.axes.set_ylabel('Delta F/F')
+            self.fitted_canvas.draw()
+            
+            self.reset_button()
+        except Exception as e:
+            traceback.print_exc()
+            QMessageBox.critical(self, "Preview Error", f"An error occurred generating the preview:\n{str(e)}")
+            self.reset_button()
+            
+    def reset_button(self):
+        self.update_btn.setText("Update Preview")
+        self.update_btn.setEnabled(True)
 
 class MultiSelectComboBox(QWidget):
     def __init__(self):
@@ -950,26 +1149,74 @@ class FiberPhotometryApp(QMainWindow):
         time_axis = np.linspace(-event_prior, event_follow, len(self.plot_data.index))
 
         if vis_mode == 'histogram':
-            mean_data = self.plot_data.mean(axis=1)
-            sem_data = self.plot_data.sem(axis=1)
-            self.canvas.axes.plot(time_axis, mean_data, label='Mean')
-            self.canvas.axes.fill_between(time_axis, mean_data - sem_data, mean_data + sem_data, alpha=0.2, label='SEM')
+            # Check if this is a Combined/Diff dataset by looking at the dataframe columns.
+            # Usually, for a single animal/date, columns are trials (0, 1, 2...).
+            # For Combined/Diff data, columns are animal IDs or Diff labels.
             self.canvas.axes.axvline(x=0, color='r', linestyle='--')
+            
+            if selected_animal == 'Combined':
+                # Plot mean and SEM across all animals in the combined dataset
+                mean_data = self.plot_data.mean(axis=1)
+                sem_data = self.plot_data.sem(axis=1)
+                self.canvas.axes.plot(time_axis, mean_data, label='Combined Mean', color='black', linewidth=2)
+                self.canvas.axes.fill_between(time_axis, mean_data - sem_data, mean_data + sem_data, alpha=0.2, color='gray', label='SEM')
+                
+                # Optionally, plot individual animal traces lightly in the background
+                for col in self.plot_data.columns:
+                    self.canvas.axes.plot(time_axis, self.plot_data[col], alpha=0.3, linewidth=1, label=f'Animal {col}')
+                    
+            elif behavior.startswith(f"{behavior.split(' (')[0]} (Δ"):
+                # Longitudinal difference plot
+                for col in self.plot_data.columns:
+                    self.canvas.axes.plot(time_axis, self.plot_data[col], linewidth=2, label=str(col))
+                
+            else:
+                # Regular single animal/date plot
+                mean_data = self.plot_data.mean(axis=1)
+                sem_data = self.plot_data.sem(axis=1)
+                self.canvas.axes.plot(time_axis, mean_data, label='Mean', color='blue')
+                self.canvas.axes.fill_between(time_axis, mean_data - sem_data, mean_data + sem_data, alpha=0.2, color='blue', label='SEM')
+
             self.canvas.axes.set_xlabel("Time (s)")
             self.canvas.axes.set_ylabel("Signal")
             self.canvas.axes.set_title(f"Perievent Histogram for {behavior}")
-            self.canvas.axes.legend()
+            
+            # Put legend outside if it has too many items
+            if len(self.canvas.axes.get_legend_handles_labels()[0]) > 6:
+                self.canvas.axes.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize='small')
+                self.canvas.figure.tight_layout()
+            else:
+                self.canvas.axes.legend()
         elif vis_mode == 'heatmap':
-            # Each event instance is a row, first event at the top
-            data = self.plot_data.T.values  # shape: (n_events, n_timepoints)
+            # For heatmaps with combined data, show animals/subjects on y-axis
+            data = self.plot_data.T.values  # shape: (n_events/subjects, n_timepoints)
             im = self.canvas.axes.imshow(data, aspect='auto', cmap='viridis',
                                          extent=[-event_prior, event_follow, data.shape[0], 0])
             self.canvas.axes.axvline(x=0, color='r', linestyle='--')
             self.canvas.axes.set_xlabel("Time (s)")
-            self.canvas.axes.set_ylabel("Event Instance")
+            
+            if selected_animal == 'Combined':
+                self.canvas.axes.set_ylabel("Subject/Animal")
+                # Set y-ticks to be the animal IDs if not too many
+                if data.shape[0] <= 15:
+                    self.canvas.axes.set_yticks(np.arange(data.shape[0]) + 0.5)
+                    self.canvas.axes.set_yticklabels(self.plot_data.columns)
+            elif behavior.startswith(f"{behavior.split(' (')[0]} (Δ"):
+                self.canvas.axes.set_ylabel("Difference Trace")
+                self.canvas.axes.set_yticks([0.5])
+                self.canvas.axes.set_yticklabels([self.plot_data.columns[0]])
+            else:
+                self.canvas.axes.set_ylabel("Event Instance (Trial)")
+                
             self.canvas.axes.set_title(f"Perievent Heatmap for {behavior}")
-            cbar = self.canvas.figure.colorbar(im, ax=self.canvas.axes)
+            
+            # Since tight_layout might be applied above, handle colorbar carefully
+            from mpl_toolkits.axes_grid1 import make_axes_locatable
+            divider = make_axes_locatable(self.canvas.axes)
+            cax = divider.append_axes("right", size="5%", pad=0.05)
+            cbar = self.canvas.figure.colorbar(im, cax=cax)
             cbar.set_label("Signal")
+            self.canvas.figure.tight_layout()
         self.canvas.draw()
 
     def save_plot_data(self):
@@ -993,7 +1240,7 @@ class FiberPhotometryApp(QMainWindow):
         content_widget = QWidget()
         content_layout = QVBoxLayout(content_widget)
         multibox_options = ['trial_start_stage', 'trial_end_stage', 'exclusion_list']
-        file_path_keys = {'file_list_path': 'open', 'event_list_path': 'open', 'output_path': 'directory'}
+        file_path_keys = {'file_list_path': 'open', 'event_list_path': 'open', 'output_path': 'directory', 'template_path': 'open'}
         for section in self.config.sections():
             if section == "Output":
                 continue
@@ -1187,6 +1434,13 @@ class FiberPhotometryApp(QMainWindow):
                     update_arpls_visibility()
             group_box.setLayout(group_layout)
             content_layout.addWidget(group_box)
+            
+            # Add preview button underneath Photometry Processing group
+            if section == "Photometry_Processing":
+                preview_btn = QPushButton("Preview Photometry Signal")
+                preview_btn.clicked.connect(self.open_photometry_preview)
+                content_layout.addWidget(preview_btn)
+                
         save_button = QPushButton("Save Changes")
         save_button.clicked.connect(self.save_config_changes_to_current_file)
         content_layout.addWidget(save_button)
@@ -1195,6 +1449,19 @@ class FiberPhotometryApp(QMainWindow):
         scroll.setWidget(content_widget)
         outer_layout.addWidget(scroll)
         self.options_tab.setLayout(outer_layout)
+
+    def open_photometry_preview(self):
+        # Read the file pair table to get the paths
+        file_sheet_path = self.file_pair_path.text()
+        file_pair_data = None
+        if os.path.exists(file_sheet_path):
+            try:
+                file_pair_data = pd.read_csv(file_sheet_path)
+            except Exception as e:
+                print(f"Failed to read file pair sheet for preview: {e}")
+                
+        preview_dialog = PhotometryPreviewWindow(self.config, file_pair_data, parent=self)
+        preview_dialog.exec()
 
     def update_options_with_template(self):
         if self.template_loaded:
@@ -1370,6 +1637,28 @@ class FiberPhotometryApp(QMainWindow):
                         self.event_file_path.setText(event_list_path)
                 except Exception as e:
                     QMessageBox.warning(self, "Error", f"Failed to load event sheet from config: {e}")
+
+            # Load template file before setting up tables if provided
+            template_path = self.config['Filepath'].get('template_path', '').strip()
+            if template_path:
+                try:
+                    if os.path.isfile(template_path):
+                        data = pd.read_csv(template_path, sep=',', header=None, names=range(17))
+                        column_index = 0
+                        for index, row in data.iterrows():
+                            if row[0] == 'Evnt_Time':
+                                column_index = index
+                        self.event_data = data.iloc[column_index:]
+                        self.event_data.columns = self.event_data.iloc[0]
+                        self.event_data = self.event_data.drop(column_index)
+                        self.unique_event_types = self.event_data['Evnt_Name'].dropna().unique().tolist()
+                        self.unique_event_names = self.event_data['Item_Name'].dropna().unique().tolist()
+                        self.unique_event_groups = self.event_data['Group_ID'].dropna().unique().tolist()
+                        self.trial_stage_options = self.event_data.loc[self.event_data['Evnt_Name'] == "Condition Event", 'Item_Name'].dropna().unique().tolist()
+                        self.template_loaded = True
+                        print(f"Loaded template behaviour file from config: {template_path}")
+                except Exception as e:
+                    print(f"Warning: Failed to auto-load template sheet from config: {e}")
 
             # Load file pair sheet if provided and is a file
             if file_list_path:
