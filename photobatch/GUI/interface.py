@@ -525,24 +525,40 @@ class FiberPhotometryApp(QMainWindow):
         save_config_as_action.triggered.connect(self.save_configuration_as)
         file_menu.addAction(save_config_as_action)
 
+    def apply_template_behaviour(self, file_path):
+        """Parse the template behaviour file and update the UI with its contents."""
+        try:
+            data = pd.read_csv(file_path, sep=',', header=None, names=range(17))
+            column_index = 0
+            for index, row in data.iterrows():
+                if row[0] == 'Evnt_Time':
+                    column_index = index
+            self.event_data = data.iloc[column_index:]
+            self.event_data.columns = self.event_data.iloc[0]
+            self.event_data = self.event_data.drop(column_index)
+            self.unique_event_types = self.event_data['Evnt_Name'].dropna().unique().tolist()
+            self.unique_event_names = self.event_data['Item_Name'].dropna().unique().tolist()
+            self.unique_event_groups = self.event_data['Group_ID'].dropna().unique().tolist()
+            self.trial_stage_options = self.event_data.loc[self.event_data['Evnt_Name'] == "Condition Event", 'Item_Name'].dropna().unique().tolist()
+            self.template_loaded = True
+            
+            # Downstream updates
+            self.update_options_with_template()
+            
+            # If the event sheet is already loaded, we might want to refresh its dropdowns
+            # but since this is usually called before or during loading, we check if it has data
+            if hasattr(self, 'event_file_path') and self.event_file_path.text() and os.path.exists(self.event_file_path.text()):
+                self.display_csv_in_table(self.event_file_path.text(), self.event_table)
+                
+            return True
+        except Exception as e:
+            raise e
+
     def import_template_behaviour_file(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Import Template Behaviour File", "", "CSV Files (*.csv)")
         if file_path:
             try:
-                data = pd.read_csv(file_path, sep=',', header=None, names=range(17))
-                column_index = 0
-                for index, row in data.iterrows():
-                    if row[0] == 'Evnt_Time':
-                        column_index = index
-                self.event_data = data.iloc[column_index:]
-                self.event_data.columns = self.event_data.iloc[0]
-                self.event_data = self.event_data.drop(column_index)
-                self.unique_event_types = self.event_data['Evnt_Name'].dropna().unique().tolist()
-                self.unique_event_names = self.event_data['Item_Name'].dropna().unique().tolist()
-                self.unique_event_groups = self.event_data['Group_ID'].dropna().unique().tolist()
-                self.trial_stage_options = self.event_data.loc[self.event_data['Evnt_Name'] == "Condition Event", 'Item_Name'].dropna().unique().tolist()
-                self.template_loaded = True
-                self.update_options_with_template()
+                self.apply_template_behaviour(file_path)
                 QMessageBox.information(self, "Imported", f"Template behaviour file imported from: {file_path}")
             except Exception as e:
                 QMessageBox.warning(self, "Error", f"Failed to load template: {str(e)}")
@@ -660,12 +676,20 @@ class FiberPhotometryApp(QMainWindow):
         table_widget.setColumnCount(cols)
         table_widget.setHorizontalHeaderLabels(data.columns)
         for row in range(rows):
+            # Pre-fetch values for this row to use if dropdowns are created
+            init_vals = {}
+            for c in range(cols):
+                h = data.columns[c].lower()
+                init_vals[h] = str(data.iat[row, c]) if pd.notna(data.iat[row, c]) else ""
+
             for col in range(cols):
                 header = data.columns[col].lower()
+                cell_val = init_vals.get(header, "")
+
                 if header == 'event_type' and self.template_loaded:
                     event_type_combo = QComboBox()
                     event_type_combo.addItems(self.unique_event_types)
-                    event_type_combo.setCurrentText(str(data.iat[row, col]))
+                    event_type_combo.setCurrentText(cell_val)
                     event_type_combo.currentTextChanged.connect(lambda text, r=row: self.filter_event_data(r, text, table_widget))
                     table_widget.setCellWidget(row, col, event_type_combo)
                 elif header == 'event_name' and self.template_loaded:
@@ -677,17 +701,26 @@ class FiberPhotometryApp(QMainWindow):
                     table_widget.setCellWidget(row, col, event_group_combo)
                 elif header == 'num_filter':
                     num_filter_spinbox = QSpinBox()
-                    num_filter_spinbox.setValue(int(data.iat[row, col]) if pd.notna(data.iat[row, col]) else 0)
+                    try:
+                        f_val = int(float(cell_val)) if cell_val else 0
+                    except ValueError:
+                        f_val = 0
+                    num_filter_spinbox.setValue(f_val)
                     num_filter_spinbox.valueChanged.connect(lambda value, r=row: self.adjust_filter_columns(r, value, table_widget))
                     table_widget.setCellWidget(row, col, num_filter_spinbox)
                 elif header in ('abet_path', 'doric_path'):
-                    cell_text = str(data.iat[row, col]) if pd.notna(data.iat[row, col]) else ""
-                    fp_widget = FilePathWidget(cell_text)
+                    fp_widget = FilePathWidget(cell_val)
                     table_widget.setCellWidget(row, col, fp_widget)
                 else:
-                    item = QTableWidgetItem(str(data.iat[row, col]))
+                    item = QTableWidgetItem(cell_val)
                     item.setFlags(item.flags() | Qt.ItemIsEditable)
                     table_widget.setItem(row, col, item)
+            
+            # After widgets are created for the row, initialize the dropdown cascade if applicable
+            if self.template_loaded and 'event_type' in init_vals:
+                self.filter_event_data(row, init_vals['event_type'], table_widget, 
+                                       initial_name=init_vals.get('event_name'), 
+                                       initial_group=init_vals.get('event_group'))
         # Ensure columns and rows are sized to show content and refresh the widget so rows become visible
         table_widget.resizeColumnsToContents()
         table_widget.resizeRowsToContents()
@@ -698,21 +731,42 @@ class FiberPhotometryApp(QMainWindow):
         table_widget.repaint()
         table_widget.setVisible(True)
 
-    def filter_event_data(self, row, event_type, table_widget):
+    def filter_event_data(self, row, event_type, table_widget, initial_name=None, initial_group=None):
+        if not self.template_loaded:
+            return
         filtered_names = self.event_data[self.event_data['Evnt_Name'] == event_type]['Item_Name'].dropna().unique()
         name_combo = table_widget.cellWidget(row, 1)
+        if not isinstance(name_combo, QComboBox):
+            return
+            
+        name_combo.blockSignals(True)
         name_combo.clear()
         name_combo.addItems(filtered_names)
-        if filtered_names.size > 0:
-            self.filter_event_group(row, filtered_names[0], table_widget)
+        if initial_name and initial_name in filtered_names:
+            name_combo.setCurrentText(initial_name)
+        name_combo.blockSignals(False)
+        
+        current_name = name_combo.currentText()
+        self.filter_event_group(row, current_name, table_widget, initial_group=initial_group)
 
-    def filter_event_group(self, row, event_name, table_widget):
+    def filter_event_group(self, row, event_name, table_widget, initial_group=None):
+        if not self.template_loaded:
+            return
         event_type_combo = table_widget.cellWidget(row, 0)
+        if not isinstance(event_type_combo, QComboBox):
+            return
         event_type = event_type_combo.currentText()
         filtered_groups = self.event_data[(self.event_data['Evnt_Name'] == event_type) & (self.event_data['Item_Name'] == event_name)]['Group_ID'].dropna().unique()
         group_combo = table_widget.cellWidget(row, 2)
+        if not isinstance(group_combo, QComboBox):
+            return
+            
+        group_combo.blockSignals(True)
         group_combo.clear()
         group_combo.addItems(filtered_groups)
+        if initial_group and initial_group in filtered_groups:
+            group_combo.setCurrentText(initial_group)
+        group_combo.blockSignals(False)
 
     def add_row(self, table_widget):
         current_row_count = table_widget.rowCount()
@@ -743,6 +797,12 @@ class FiberPhotometryApp(QMainWindow):
                 item = QTableWidgetItem("")
                 item.setFlags(item.flags() | Qt.ItemIsEditable)
                 table_widget.setItem(current_row_count, col, item)
+
+        # Initialize dropdowns for the new row if template is loaded
+        if self.template_loaded:
+            type_combo = table_widget.cellWidget(current_row_count, 0)
+            if isinstance(type_combo, QComboBox) and type_combo.count() > 0:
+                self.filter_event_data(current_row_count, type_combo.currentText(), table_widget)
 
     def adjust_filter_columns(self, row, num_filters, table_widget):
         total_columns = 5 + (num_filters * 6)
@@ -1814,16 +1874,29 @@ class FiberPhotometryApp(QMainWindow):
         Maps:
           - event_list_path -> event sheet (self.event_table)
           - file_list_path  -> file pair sheet (self.file_pair_table)
+          - template_path   -> template behaviour (apply_template_behaviour)
         This will set the QLineEdit paths and call display_csv_in_table to populate the tables.
         """
         try:
             if "Filepath" not in self.config:
                 return
 
+            # 1. Load template file FIRST so that subsequent table loading can use dropdowns
+            template_path = self.config['Filepath'].get('template_path', '').strip()
+            if template_path:
+                if os.path.isfile(template_path):
+                    try:
+                        self.apply_template_behaviour(template_path)
+                        print(f"Loaded template behaviour file from config: {template_path}")
+                    except Exception as e:
+                        print(f"Warning: Failed to auto-load template sheet from config: {e}")
+                else:
+                    print(f"Warning: Template path from config is not a valid file: {template_path}")
+
             file_list_path = self.config['Filepath'].get('file_list_path', '').strip()
             event_list_path = self.config['Filepath'].get('event_list_path', '').strip()
 
-            # Load event sheet if provided and is a file
+            # 2. Load event sheet if provided and is a file
             if event_list_path:
                 try:
                     if os.path.isfile(event_list_path):
@@ -1835,29 +1908,7 @@ class FiberPhotometryApp(QMainWindow):
                 except Exception as e:
                     QMessageBox.warning(self, "Error", f"Failed to load event sheet from config: {e}")
 
-            # Load template file before setting up tables if provided
-            template_path = self.config['Filepath'].get('template_path', '').strip()
-            if template_path:
-                try:
-                    if os.path.isfile(template_path):
-                        data = pd.read_csv(template_path, sep=',', header=None, names=range(17))
-                        column_index = 0
-                        for index, row in data.iterrows():
-                            if row[0] == 'Evnt_Time':
-                                column_index = index
-                        self.event_data = data.iloc[column_index:]
-                        self.event_data.columns = self.event_data.iloc[0]
-                        self.event_data = self.event_data.drop(column_index)
-                        self.unique_event_types = self.event_data['Evnt_Name'].dropna().unique().tolist()
-                        self.unique_event_names = self.event_data['Item_Name'].dropna().unique().tolist()
-                        self.unique_event_groups = self.event_data['Group_ID'].dropna().unique().tolist()
-                        self.trial_stage_options = self.event_data.loc[self.event_data['Evnt_Name'] == "Condition Event", 'Item_Name'].dropna().unique().tolist()
-                        self.template_loaded = True
-                        print(f"Loaded template behaviour file from config: {template_path}")
-                except Exception as e:
-                    print(f"Warning: Failed to auto-load template sheet from config: {e}")
-
-            # Load file pair sheet if provided and is a file
+            # 3. Load file pair sheet if provided and is a file
             if file_list_path:
                 try:
                     if os.path.isfile(file_list_path):
