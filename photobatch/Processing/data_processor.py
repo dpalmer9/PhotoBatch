@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 import h5py
 from sklearn.linear_model import LinearRegression, HuberRegressor
+from scipy.ndimage import median_filter
 from pathlib import Path
 
 
@@ -557,8 +558,29 @@ class PhotometryData:
             doric_pandas_cut = doric_pandas_cut[doric_pandas_cut['Time'] <= (max_time - end_time_remove)]
         self.doric_pandas = doric_pandas_cut.reset_index(drop=True)
 
+    def despike_signal(self, sig_array, window=2001, threshold=5.0):
+            # Calculate rolling median
+            med = median_filter(sig_array, size=window)
+            # Calculate rolling Median Absolute Deviation (MAD)
+            mad = median_filter(np.abs(sig_array - med), size=window)
+            
+            # Prevent division by zero if mad is perfectly 0 in flat regions
+            mad[mad == 0] = np.min(mad[mad > 0]) if np.any(mad > 0) else 1e-6
+            
+            # Flag outliers
+            outliers = np.abs(sig_array - med) > (threshold * mad)
+            
+            # Interpolate outliers
+            cleaned = sig_array.copy()
+            if np.any(outliers):
+                valid_idx = np.flatnonzero(~outliers)
+                outlier_idx = np.flatnonzero(outliers)
+                cleaned[outliers] = np.interp(outlier_idx, valid_idx, sig_array[valid_idx])
+            
+            return cleaned
+
     def doric_filter(self, filter_type='lowpass', filter_name='butterworth', filter_order=4, filter_cutoff=6,
-                     fs_method='median'):
+                     fs_method='median', despike=True):
         # Prepare data and apply selected filter (returns time and filtered signals)
         doric_pandas_cut = self.doric_pandas[self.doric_pandas['Time'] >= 0]
 
@@ -569,6 +591,10 @@ class PhotometryData:
         time_data = time_data.astype(float)
         f0_data = f0_data.astype(float)
         f_data = f_data.astype(float)
+
+        if despike:
+            f0_data = self.despike_signal(f0_data)
+            f_data = self.despike_signal(f_data)
 
         # compute sample frequency (Hz)
         if fs_method == 'median':
@@ -603,8 +629,8 @@ class PhotometryData:
                 # Unknown filter name, fallback to Butterworth
                 sos = signal.butter(N=order, Wn=cutoff, btype='lowpass', analog=False, output='sos', fs=self.sample_frequency)
 
-            filtered_f0 = signal.sosfilt(sos, f0_data)
-            filtered_f = signal.sosfilt(sos, f_data)
+            filtered_f0 = signal.sosfiltfilt(sos, f0_data)
+            filtered_f = signal.sosfiltfilt(sos, f_data)
 
         elif filter_type_lower in ('smoothing', 'smooth', 'savgol', 'savgolay'):
             # Use Savitzky-Golay smoothing filter. Interpret filter_order as window length.
@@ -630,7 +656,6 @@ class PhotometryData:
             filtered_f0 = f0_data.copy()
             filtered_f = f_data.copy()
 
-        print(filtered_f)
         return time_data, filtered_f0, filtered_f
 
 
