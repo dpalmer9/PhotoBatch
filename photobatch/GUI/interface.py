@@ -757,8 +757,8 @@ class FiberPhotometryApp(QMainWindow):
         layout.addWidget(self.event_file_btn)
         layout.addWidget(self.event_file_path)
         self.event_table = QTableWidget()
-        self.event_table.setColumnCount(5)
-        self.event_table.setHorizontalHeaderLabels(['event_type', 'event_name', 'event_group', 'event_arg', 'num_filter'])
+        self.event_table.setColumnCount(6)
+        self.event_table.setHorizontalHeaderLabels(['event_alias','event_type', 'event_name', 'event_group', 'event_arg', 'num_filter'])
         self.event_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.event_table.customContextMenuRequested.connect(lambda pos: self.show_table_context_menu(pos, self.event_table))
         layout.addWidget(self.event_table)
@@ -876,11 +876,20 @@ class FiberPhotometryApp(QMainWindow):
         table_widget.repaint()
         table_widget.setVisible(True)
 
+    def _find_column(self, table_widget, header_name):
+        """Return the column index whose header matches *header_name* (case-insensitive), or -1."""
+        for col in range(table_widget.columnCount()):
+            item = table_widget.horizontalHeaderItem(col)
+            if item and item.text().lower() == header_name.lower():
+                return col
+        return -1
+
     def filter_event_data(self, row, event_type, table_widget, initial_name=None, initial_group=None):
         if not self.template_loaded:
             return
         filtered_names = self.event_data[self.event_data['Evnt_Name'] == event_type]['Item_Name'].dropna().unique()
-        name_combo = table_widget.cellWidget(row, 1)
+        name_col = self._find_column(table_widget, 'event_name')
+        name_combo = table_widget.cellWidget(row, name_col) if name_col >= 0 else None
         if not isinstance(name_combo, QComboBox):
             return
             
@@ -897,12 +906,14 @@ class FiberPhotometryApp(QMainWindow):
     def filter_event_group(self, row, event_name, table_widget, initial_group=None):
         if not self.template_loaded:
             return
-        event_type_combo = table_widget.cellWidget(row, 0)
+        type_col = self._find_column(table_widget, 'event_type')
+        event_type_combo = table_widget.cellWidget(row, type_col) if type_col >= 0 else None
         if not isinstance(event_type_combo, QComboBox):
             return
         event_type = event_type_combo.currentText()
         filtered_groups = self.event_data[(self.event_data['Evnt_Name'] == event_type) & (self.event_data['Item_Name'] == event_name)]['Group_ID'].dropna().unique()
-        group_combo = table_widget.cellWidget(row, 2)
+        group_col = self._find_column(table_widget, 'event_group')
+        group_combo = table_widget.cellWidget(row, group_col) if group_col >= 0 else None
         if not isinstance(group_combo, QComboBox):
             return
             
@@ -945,15 +956,20 @@ class FiberPhotometryApp(QMainWindow):
 
         # Initialize dropdowns for the new row if template is loaded
         if self.template_loaded:
-            type_combo = table_widget.cellWidget(current_row_count, 0)
+            type_col = self._find_column(table_widget, 'event_type')
+            type_combo = table_widget.cellWidget(current_row_count, type_col) if type_col >= 0 else None
             if isinstance(type_combo, QComboBox) and type_combo.count() > 0:
                 self.filter_event_data(current_row_count, type_combo.currentText(), table_widget)
 
     def adjust_filter_columns(self, row, num_filters, table_widget):
-        total_columns = 5 + (num_filters * 6)
+        # Determine fixed-column count dynamically so sheets with or without
+        # event_alias (and any other future leading columns) are handled correctly.
+        num_filter_col = self._find_column(table_widget, 'num_filter')
+        fixed_cols = (num_filter_col + 1) if num_filter_col >= 0 else 6
+        total_columns = fixed_cols + (num_filters * 6)
         table_widget.setColumnCount(total_columns)
         for i in range(1, num_filters + 1):
-            base_index = 5 + (i - 1) * 6
+            base_index = fixed_cols + (i - 1) * 6
             headers = [f'filter_type{i}', f'filter_name{i}', f'filter_group{i}', f'filter_arg{i}', f'filter_eval{i}', f'filter_prior{i}']
             for j, header in enumerate(headers):
                 table_widget.setHorizontalHeaderItem(base_index + j, QTableWidgetItem(header))

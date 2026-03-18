@@ -64,6 +64,7 @@ class PhotometryData:
         self.event_name_col = ''
         self.time_var_name = ''
         self.event_name = ''
+        self.event_alias = ''  # display label; may differ from event_name when filters differentiate identical events
 
         # Initialize List Variables
 
@@ -316,7 +317,7 @@ class PhotometryData:
     def abet_search_event(self, start_event_id='1', start_event_group='', start_event_item_name='',
                           start_event_position=None,
                           filter_event=False, filter_list=None, extra_prior_time=0, extra_follow_time=0,
-                          exclusion_list=None):
+                          exclusion_list=None, event_alias=''):
         """ abet_search_event - This function searches through the ABET unprocessed data 
         for events specified in the ABET GUI. These events can be Condition Events, Variable Events,
         Touch Up/Down Events, Input Transition On/Off Events. This function can filter primary
@@ -466,6 +467,7 @@ class PhotometryData:
         self.abet_event_times.columns = ['Start_Time', 'End_Time']
         print(self.abet_event_times)
         self.event_name = start_event_item_name
+        self.event_alias = event_alias if event_alias else start_event_item_name
         self.extra_follow = extra_follow_time
         self.extra_prior = extra_prior_time
 
@@ -1019,7 +1021,8 @@ class PhotometryData:
         output_folder = self.main_folder_path / 'Output'
         output_folder.mkdir(exist_ok=True)
         if self.abet_loaded is True and self.anymaze_loaded is False:
-            file_name_str = f"{output_string}-{self.animal_id} {self.date} {self.event_name}.csv"
+            label = self.event_alias if self.event_alias else self.event_name
+            file_name_str = f"{output_string}-{self.animal_id} {self.date} {label}.csv"
             file_path_string = str(output_folder / file_name_str)
         else:
             current_time = datetime.now()
@@ -1108,6 +1111,48 @@ class PhotometryData:
 
 
 # Functions
+def _generate_event_alias(event_row):
+    """Return a label that uniquely identifies this event row.
+
+    Priority:
+    1. The explicit ``event_alias`` column value (if the column exists and the
+       value is non-empty / not NaN).
+    2. An auto-generated string built from ``event_name`` and each active
+       filter's name, evaluation operator, and argument, e.g.::
+
+           "Display Sample [_Trial_Counter>9 & _Trial_Counter<=49]"
+
+    The first filter uses bare column names (``filter_name``, ``filter_eval``,
+    ``filter_arg``) and subsequent filters append an integer suffix
+    (``filter_name2``, …).
+    """
+    alias = str(event_row.get('event_alias', '')).strip()
+    if alias and alias.lower() not in ('nan', 'none', ''):
+        return alias
+
+    base = str(event_row.get('event_name', 'Event')).strip()
+    try:
+        num_filter = int(float(event_row.get('num_filter', 0)))
+    except (ValueError, TypeError):
+        num_filter = 0
+
+    if num_filter == 0:
+        return base
+
+    filter_parts = []
+    for i in range(1, num_filter + 1):
+        suffix = '' if i == 1 else str(i)
+        fname = str(event_row.get(f'filter_name{suffix}', '')).strip()
+        feval = str(event_row.get(f'filter_eval{suffix}', '')).strip()
+        farg  = str(event_row.get(f'filter_arg{suffix}',  '')).strip()
+        if fname and feval and farg and fname.lower() not in ('nan', 'none'):
+            filter_parts.append(f"{fname}{feval}{farg}")
+
+    if filter_parts:
+        return f"{base} [{' & '.join(filter_parts)}]"
+    return base
+
+
 def abet_extract_information(abet_file_path):
     animal_id = ''
     date = ''
@@ -1134,6 +1179,30 @@ def abet_extract_information(abet_file_path):
             elif row[0] in event_time_colname:
                 break
     return animal_id, date, time, datetime_str, schedule
+
+def _create_filter_list(event_row):
+    """Create a list of filter dicts from the event_row, based on the num_filter column and corresponding filter_nameN, filter_evalN, filter_argN columns."""
+    num_filters = event_row.get('num_filter', 0)
+    # Loop across filter numbers and construct dicts for each valid filter
+    filter_list = []
+    for fil in range(1, num_filters + 1):
+        # Legacy Check: Check if filter_type is existing column, if so modify fil_mod to '' for backward compatibility
+        if event_row.get('filter_type', None) is not None and fil == 1:
+            fil_mod = ''
+        else:
+            fil_mod = str(fil)
+        fil_type_str = 'filter_type' + fil_mod
+        fil_name_str = 'filter_name' + fil_mod
+        fil_group_str = 'filter_group' + fil_mod
+        fil_arg_str = 'filter_arg' + fil_mod
+        fil_eval_str = 'filter_eval' + fil_mod
+        fil_prior_str = 'filter_prior' + fil_mod
+
+        fil_dict = {'Type': event_row[fil_type_str], 'Name': event_row[fil_name_str],
+                            'Group': str(int(event_row[fil_group_str])), 'Arg': event_row[fil_arg_str],
+                            'Prior': event_row[fil_prior_str], 'Eval': event_row[fil_eval_str]}
+        filter_list.append(fil_dict)
+    return filter_list
 
 def _process_single_file(args):
     """Module-level worker for ProcessPoolExecutor. Processes one ABET/Doric file pair
@@ -1194,14 +1263,42 @@ def _process_single_file(args):
     event_sheet_df = pd.read_csv(event_sheet_path)
 
     for _, event_row in event_sheet_df.iterrows():
-        photometry_data.abet_search_event(
-            start_event_id=event_row['event_type'],
-            start_event_item_name=event_row['event_name'],
-            start_event_group=event_row['event_group'],
-            extra_prior_time=event_window_prior,
-            extra_follow_time=event_window_follow,
-            exclusion_list=exclusion_list
-        )
+        # Resolve the display label for this event (user-provided or auto-generated).
+        event_alias = _generate_event_alias(event_row)
+
+        # Check if event_row[num_filters] is a valid integer > 0, otherwise treat as 0
+        try:
+            num_filters = int(float(event_row.get('num_filter', 0)))
+            if num_filters < 0:
+                num_filters = 0
+        except (ValueError, TypeError):
+            num_filters = 0
+
+        # Conduct non-filtered search event if num_filters is 0
+        if num_filters == 0:
+            photometry_data.abet_search_event(
+                start_event_id=event_row['event_type'],
+                start_event_item_name=event_row['event_name'],
+                start_event_group=event_row['event_group'],
+                extra_prior_time=event_window_prior,
+                extra_follow_time=event_window_follow,
+                exclusion_list=exclusion_list,
+                event_alias=event_alias,
+            )
+        # Conduct filtered search event if num_filters > 0, apply filters as list to abet_search_event
+        else:
+            filter_list = _create_filter_list(event_row)
+            photometry_data.abet_search_event(
+                start_event_id=event_row['event_type'],
+                start_event_item_name=event_row['event_name'],
+                start_event_group=event_row['event_group'],
+                extra_prior_time=event_window_prior,
+                extra_follow_time=event_window_follow,
+                exclusion_list=exclusion_list,
+                event_alias=event_alias,
+                filter_list=filter_list,
+                filter_event = True
+                )
         photometry_data.trial_separator(
             trial_normalize=center_z,
             trial_iti_pad=iti_prior_trial,
@@ -1224,13 +1321,13 @@ def _process_single_file(args):
             plot_df_copy = pd.DataFrame(plot_df)
 
         try:
-            print(f"Processed file={row['abet_path']} behavior={event_row['event_name']} plot_shape={plot_df_copy.shape}")
+            print(f"Processed file={row['abet_path']} behavior={event_alias} plot_shape={plot_df_copy.shape}")
         except (KeyError, AttributeError):
             print("Processed one result (unable to format debug info)")
 
         file_results.append({
             "file": os.path.basename(row['abet_path']),
-            "behavior": event_row['event_name'],
+            "behavior": event_alias,
             "max_peak": max_peak,
             "auc": auc,
             "plot_data": plot_df_copy,
