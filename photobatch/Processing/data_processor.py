@@ -580,7 +580,8 @@ class PhotometryData:
             return cleaned
 
     def doric_filter(self, filter_type='lowpass', filter_name='butterworth', filter_order=4, filter_cutoff=6,
-                     fs_method='median', despike=True):
+                     fs_method='median', despike=True, despike_window=2001, despike_threshold=5.0,
+                     cheby_ripple=1.0):
         # Prepare data and apply selected filter (returns time and filtered signals)
         doric_pandas_cut = self.doric_pandas[self.doric_pandas['Time'] >= 0]
 
@@ -593,8 +594,8 @@ class PhotometryData:
         f_data = f_data.astype(float)
 
         if despike:
-            f0_data = self.despike_signal(f0_data)
-            f_data = self.despike_signal(f_data)
+            f0_data = self.despike_signal(f0_data, window=int(despike_window), threshold=float(despike_threshold))
+            f_data = self.despike_signal(f_data, window=int(despike_window), threshold=float(despike_threshold))
 
         # compute sample frequency (Hz)
         if fs_method == 'median':
@@ -623,8 +624,8 @@ class PhotometryData:
                 # bessel supports sos output in recent scipy
                 sos = signal.bessel(N=order, Wn=cutoff, btype='lowpass', analog=False, output='sos', fs=self.sample_frequency)
             elif filt_name in ('chebychev', 'cheby', 'cheby1'):
-                # use Chebyshev type I with default ripple of 1 dB
-                sos = signal.cheby1(N=order, rp=1, Wn=cutoff, btype='lowpass', analog=False, output='sos', fs=self.sample_frequency)
+                # use Chebyshev type I with caller-supplied ripple (dB)
+                sos = signal.cheby1(N=order, rp=float(cheby_ripple), Wn=cutoff, btype='lowpass', analog=False, output='sos', fs=self.sample_frequency)
             else:
                 # Unknown filter name, fallback to Butterworth
                 sos = signal.butter(N=order, Wn=cutoff, btype='lowpass', analog=False, output='sos', fs=self.sample_frequency)
@@ -659,7 +660,9 @@ class PhotometryData:
         return time_data, filtered_f0, filtered_f
 
 
-    def doric_fit(self, fit_type, filtered_f0, filtered_f, time_data=None, robust_fit=True):
+    def doric_fit(self, fit_type, filtered_f0, filtered_f, time_data=None, robust_fit=True,
+                  arpls_lambda=1e5, arpls_max_iter=50, arpls_tol=1e-6, arpls_eps=1e-8,
+                  arpls_weight_scale=2.0):
         """ doric_fit - This function fits the filtered photometry signals to compute delta-F/F. 
         The fit can be linear regression, exponential decay, or arPLS baseline fitting. 
         The fitted baseline is used to compute delta-F/F for the active channel.
@@ -714,9 +717,11 @@ class PhotometryData:
             # Implements the algorithm by Baek et al. (2015) / variants using iterative reweighting.
             y = filtered_f.astype(float)
             n = y.size
-            lam = 1e5  # smoothing parameter; could be exposed to the caller
-            ratio = 1e-6
-            max_iter = 50
+            lam = float(arpls_lambda)
+            ratio = float(arpls_tol)
+            max_iter = int(arpls_max_iter)
+            eps = float(arpls_eps)
+            weight_scale = float(arpls_weight_scale)
 
             # Construct second-difference matrix D (size (n-2) x n)
             e = np.ones(n)
@@ -749,12 +754,10 @@ class PhotometryData:
                 if s <= 0:
                     break
                 # logistic weighting as described in arPLS paper
-                # logistic(d, m, s) = 1 / (1 + exp(2*(d - (2*s - m))/s))
-                # this sets weight near 1 for values below baseline and near 0 for peaks above baseline
-                wt = 1.0 / (1.0 + np.exp(2.0 * (d - (2.0 * s - m)) / s))
+                # weight_scale controls sharpness of the logistic transition around the baseline
+                wt = 1.0 / (1.0 + np.exp(weight_scale * (d - (2.0 * s - m)) / s))
 
                 # enforce bounds [eps, 1-eps]
-                eps = 1e-8
                 wt = np.clip(wt, eps, 1.0)
 
                 # convergence check
@@ -1145,7 +1148,10 @@ def _process_single_file(args):
      trial_start_stage, trial_end_stage,
      iti_prior_trial, center_z, center_method,
      filter_type, filter_name, filter_order, filter_cutoff,
-     fit_type, exclusion_list, crop_start, crop_end) = args
+     despike, despike_window, despike_threshold, cheby_ripple,
+     fit_type, robust_fit,
+     arpls_lambda, arpls_max_iter, arpls_tol, arpls_eps, arpls_weight_scale,
+     exclusion_list, crop_start, crop_end) = args
 
     row = pd.Series(row_dict)
     file_results = []
@@ -1165,9 +1171,19 @@ def _process_single_file(args):
         filter_type=filter_type,
         filter_name=filter_name,
         filter_order=filter_order,
-        filter_cutoff=filter_cutoff
+        filter_cutoff=filter_cutoff,
+        despike=despike,
+        despike_window=despike_window,
+        despike_threshold=despike_threshold,
+        cheby_ripple=cheby_ripple,
     )
-    photometry_data.doric_fit(fit_type, filtered_f0, filtered_f, time_data)
+    photometry_data.doric_fit(fit_type, filtered_f0, filtered_f, time_data,
+                              robust_fit=robust_fit,
+                              arpls_lambda=arpls_lambda,
+                              arpls_max_iter=arpls_max_iter,
+                              arpls_tol=arpls_tol,
+                              arpls_eps=arpls_eps,
+                              arpls_weight_scale=arpls_weight_scale)
     photometry_data.abet_trial_definition(trial_start_stage, trial_end_stage)
 
     try:
@@ -1272,7 +1288,46 @@ def process_files(file_sheet_path, event_sheet_path, output_options, config, num
     filter_order = int(config['Photometry_Processing']['filter_order'])
     filter_cutoff = int(config['Photometry_Processing']['filter_cutoff'])
 
+    despike_str = config['Photometry_Processing'].get('despike', 'true')
+    despike = despike_str.lower() in ('true', '1', 'yes')
+    try:
+        despike_window = int(config['Photometry_Processing'].get('despike_window', '2001'))
+    except ValueError:
+        despike_window = 2001
+    try:
+        despike_threshold = float(config['Photometry_Processing'].get('despike_threshold', '5.0'))
+    except ValueError:
+        despike_threshold = 5.0
+    try:
+        cheby_ripple = float(config['Photometry_Processing'].get('cheby_ripple', '1.0'))
+    except ValueError:
+        cheby_ripple = 1.0
+
     fit_type = config['Photometry_Processing']['fit_type']
+
+    robust_fit_str = config['Photometry_Processing'].get('robust_fit', 'true')
+    robust_fit = robust_fit_str.lower() in ('true', '1', 'yes')
+
+    try:
+        arpls_lambda = float(config['Photometry_Processing'].get('arpls_lambda', '1e5'))
+    except ValueError:
+        arpls_lambda = 1e5
+    try:
+        arpls_max_iter = int(config['Photometry_Processing'].get('arpls_max_iter', '50'))
+    except ValueError:
+        arpls_max_iter = 50
+    try:
+        arpls_tol = float(config['Photometry_Processing'].get('arpls_tol', '1e-6'))
+    except ValueError:
+        arpls_tol = 1e-6
+    try:
+        arpls_eps = float(config['Photometry_Processing'].get('arpls_eps', '1e-8'))
+    except ValueError:
+        arpls_eps = 1e-8
+    try:
+        arpls_weight_scale = float(config['Photometry_Processing'].get('arpls_weight_scale', '2.0'))
+    except ValueError:
+        arpls_weight_scale = 2.0
     
     try:
         crop_start = float(config['Photometry_Processing'].get('crop_start', '0.0'))
@@ -1294,7 +1349,10 @@ def process_files(file_sheet_path, event_sheet_path, output_options, config, num
             trial_start_stage, trial_end_stage,
             iti_prior_trial, center_z, center_method,
             filter_type, filter_name, filter_order, filter_cutoff,
-            fit_type, exclusion_list, crop_start, crop_end
+            despike, despike_window, despike_threshold, cheby_ripple,
+            fit_type, robust_fit,
+            arpls_lambda, arpls_max_iter, arpls_tol, arpls_eps, arpls_weight_scale,
+            exclusion_list, crop_start, crop_end
         )
         for _, row in file_pair_df.iterrows()
     ]

@@ -32,14 +32,18 @@ class PhotometryPreviewWindow(QDialog):
     def __init__(self, config, file_pair_data, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Photometry Preview Window")
-        self.resize(1000, 800)
+        self.resize(2000, 900)
         self.config = config
         self.file_pair_data = file_pair_data
         
         main_layout = QHBoxLayout(self)
         
-        # Left side controls
-        controls_layout = QVBoxLayout()
+        # Left side controls (scrollable so they never get clipped)
+        controls_scroll = QScrollArea()
+        controls_scroll.setWidgetResizable(True)
+        controls_scroll.setFixedWidth(320)
+        controls_inner = QWidget()
+        controls_layout = QVBoxLayout(controls_inner)
         controls_form = QFormLayout()
         
         self.file_select = QComboBox()
@@ -63,10 +67,16 @@ class PhotometryPreviewWindow(QDialog):
         self.filter_order.setValue(int(self.config['Photometry_Processing'].get('filter_order', '4')))
         controls_form.addRow("Filter/Savgol Order:", self.filter_order)
         
+        self._fo_cutoff_label = QLabel("Cutoff/Savgol Window:")
         self.filter_cutoff = QSpinBox()
         self.filter_cutoff.setRange(1, 1000)
         self.filter_cutoff.setValue(int(self.config['Photometry_Processing'].get('filter_cutoff', '10')))
-        controls_form.addRow("Cutoff/Savgol Window:", self.filter_cutoff)
+        controls_form.addRow(self._fo_cutoff_label, self.filter_cutoff)
+        
+        # cheby_ripple: only shown when filter_type==lowpass AND filter_name==chebychev
+        self._cheby_ripple_label = QLabel("Chebyshev Ripple (dB):")
+        self.cheby_ripple = QLineEdit(self.config['Photometry_Processing'].get('cheby_ripple', '1.0'))
+        controls_form.addRow(self._cheby_ripple_label, self.cheby_ripple)
         
         self.crop_start = QLineEdit(self.config['Photometry_Processing'].get('crop_start', '0.0'))
         controls_form.addRow("Crop Start (s):", self.crop_start)
@@ -74,13 +84,69 @@ class PhotometryPreviewWindow(QDialog):
         self.crop_end = QLineEdit(self.config['Photometry_Processing'].get('crop_end', '0.0'))
         controls_form.addRow("Crop End (s):", self.crop_end)
         
+        # Despike group
+        self.despike = QCheckBox()
+        despike_str = self.config['Photometry_Processing'].get('despike', 'true')
+        self.despike.setChecked(despike_str.lower() in ('true', '1'))
+        controls_form.addRow("Despike:", self.despike)
+        
+        self._despike_window_label = QLabel("Despike Window:")
+        self.despike_window = QSpinBox()
+        self.despike_window.setRange(3, 100001)
+        self.despike_window.setSingleStep(2)
+        try:
+            self.despike_window.setValue(int(self.config['Photometry_Processing'].get('despike_window', '2001')))
+        except ValueError:
+            self.despike_window.setValue(2001)
+        controls_form.addRow(self._despike_window_label, self.despike_window)
+        
+        self._despike_threshold_label = QLabel("Despike Threshold:")
+        self.despike_threshold = QLineEdit(self.config['Photometry_Processing'].get('despike_threshold', '5.0'))
+        controls_form.addRow(self._despike_threshold_label, self.despike_threshold)
+        
         self.fit_type = QComboBox()
         self.fit_type.addItems(['linear', 'expodecay', 'arpls'])
         self.fit_type.setCurrentText(self.config['Photometry_Processing'].get('fit_type', 'linear'))
         controls_form.addRow("Fit Type:", self.fit_type)
         
+        # robust_fit: only shown when fit_type == linear
+        self._robust_fit_label = QLabel("Robust Fit (Huber):")
+        self.robust_fit = QCheckBox()
+        robust_str = self.config['Photometry_Processing'].get('robust_fit', 'true')
+        self.robust_fit.setChecked(robust_str.lower() in ('true', '1'))
+        controls_form.addRow(self._robust_fit_label, self.robust_fit)
+        
+        # arPLS controls — only shown when fit_type == arpls
+        self._arpls_lambda_label = QLabel("arPLS Lambda:")
         self.arpls_lambda = QLineEdit(self.config['Photometry_Processing'].get('arpls_lambda', '1e5'))
-        controls_form.addRow("arPLS Lambda:", self.arpls_lambda)
+        controls_form.addRow(self._arpls_lambda_label, self.arpls_lambda)
+        
+        self._arpls_max_iter_label = QLabel("arPLS Max Iterations:")
+        self.arpls_max_iter = QSpinBox()
+        self.arpls_max_iter.setRange(1, 1000)
+        try:
+            self.arpls_max_iter.setValue(int(self.config['Photometry_Processing'].get('arpls_max_iter', '50')))
+        except ValueError:
+            self.arpls_max_iter.setValue(50)
+        controls_form.addRow(self._arpls_max_iter_label, self.arpls_max_iter)
+        
+        self._arpls_tol_label = QLabel("arPLS Tolerance:")
+        self.arpls_tol = QLineEdit(self.config['Photometry_Processing'].get('arpls_tol', '1e-6'))
+        controls_form.addRow(self._arpls_tol_label, self.arpls_tol)
+        
+        self._arpls_eps_label = QLabel("arPLS Epsilon:")
+        self.arpls_eps = QLineEdit(self.config['Photometry_Processing'].get('arpls_eps', '1e-8'))
+        controls_form.addRow(self._arpls_eps_label, self.arpls_eps)
+        
+        self._arpls_weight_scale_label = QLabel("arPLS Weight Scale:")
+        self.arpls_weight_scale = QLineEdit(self.config['Photometry_Processing'].get('arpls_weight_scale', '2.0'))
+        controls_form.addRow(self._arpls_weight_scale_label, self.arpls_weight_scale)
+        
+        self._arpls_downsample_label = QLabel("arPLS Downsample:")
+        self.arpls_downsample = QCheckBox()
+        ds_str = self.config['Photometry_Processing'].get('arpls_downsample', 'true')
+        self.arpls_downsample.setChecked(ds_str.lower() in ('true', '1'))
+        controls_form.addRow(self._arpls_downsample_label, self.arpls_downsample)
         
         controls_layout.addLayout(controls_form)
         
@@ -88,12 +154,20 @@ class PhotometryPreviewWindow(QDialog):
         self.update_btn.clicked.connect(self.update_preview)
         controls_layout.addWidget(self.update_btn)
         controls_layout.addStretch()
+        controls_scroll.setWidget(controls_inner)
+        
+        # Connect all conditional visibility
+        self.fit_type.currentTextChanged.connect(self._update_preview_visibility)
+        self.filter_type.currentTextChanged.connect(self._update_preview_visibility)
+        self.filter_name.currentTextChanged.connect(self._update_preview_visibility)
+        self.despike.stateChanged.connect(self._update_preview_visibility)
+        self._update_preview_visibility()
         
         # Right side plots
         plots_layout = QVBoxLayout()
-        self.raw_canvas = MatplotlibCanvas(self, width=6, height=3)
-        self.filtered_canvas = MatplotlibCanvas(self, width=6, height=3)
-        self.fitted_canvas = MatplotlibCanvas(self, width=6, height=3)
+        self.raw_canvas = MatplotlibCanvas(self, width=12, height=3)
+        self.filtered_canvas = MatplotlibCanvas(self, width=12, height=3)
+        self.fitted_canvas = MatplotlibCanvas(self, width=12, height=3)
         
         plots_layout.addWidget(QLabel("Raw Data (Isobestic and Active)"))
         plots_layout.addWidget(self.raw_canvas)
@@ -102,8 +176,41 @@ class PhotometryPreviewWindow(QDialog):
         plots_layout.addWidget(QLabel("Filtered & Fitted Data (Delta F/F)"))
         plots_layout.addWidget(self.fitted_canvas)
         
-        main_layout.addLayout(controls_layout, 1)
-        main_layout.addLayout(plots_layout, 3)
+        main_layout.addWidget(controls_scroll)
+        main_layout.addLayout(plots_layout, 1)
+
+    def _update_preview_visibility(self):
+        """Show/hide controls in the preview window based on current selections."""
+        fit = self.fit_type.currentText()
+        ftype = self.filter_type.currentText()
+        fname = self.filter_name.currentText()
+        is_arpls = fit == 'arpls'
+        is_linear = fit == 'linear'
+        is_cheby = ftype == 'lowpass' and fname == 'chebychev'
+        is_despiking = self.despike.isChecked()
+
+        for lbl, w in [
+            (self._arpls_lambda_label, self.arpls_lambda),
+            (self._arpls_max_iter_label, self.arpls_max_iter),
+            (self._arpls_tol_label, self.arpls_tol),
+            (self._arpls_eps_label, self.arpls_eps),
+            (self._arpls_weight_scale_label, self.arpls_weight_scale),
+            (self._arpls_downsample_label, self.arpls_downsample),
+        ]:
+            lbl.setVisible(is_arpls)
+            w.setVisible(is_arpls)
+
+        self._robust_fit_label.setVisible(is_linear)
+        self.robust_fit.setVisible(is_linear)
+
+        self._cheby_ripple_label.setVisible(is_cheby)
+        self.cheby_ripple.setVisible(is_cheby)
+
+        self._despike_window_label.setVisible(is_despiking)
+        self.despike_window.setVisible(is_despiking)
+        self._despike_threshold_label.setVisible(is_despiking)
+        self.despike_threshold.setVisible(is_despiking)
+        
         
     def populate_file_options(self):
         if self.file_pair_data is not None and not self.file_pair_data.empty:
@@ -178,12 +285,28 @@ class PhotometryPreviewWindow(QDialog):
                 self.raw_canvas.axes.set_ylabel('Fluorescence')
             self.raw_canvas.draw()
             
+            # Parse despike params
+            despike_enabled = self.despike.isChecked()
+            despike_window_val = self.despike_window.value()
+            try:
+                despike_threshold_val = float(self.despike_threshold.text())
+            except ValueError:
+                despike_threshold_val = 5.0
+            try:
+                cheby_ripple_val = float(self.cheby_ripple.text())
+            except ValueError:
+                cheby_ripple_val = 1.0
+
             # Filter
             time_data, filtered_f0, filtered_f = photometry_data.doric_filter(
                 filter_type=self.filter_type.currentText(),
                 filter_name=self.filter_name.currentText(),
                 filter_order=self.filter_order.value(),
-                filter_cutoff=self.filter_cutoff.value()
+                filter_cutoff=self.filter_cutoff.value(),
+                despike=despike_enabled,
+                despike_window=despike_window_val,
+                despike_threshold=despike_threshold_val,
+                cheby_ripple=cheby_ripple_val,
             )
             
             # Plot Filtered
@@ -195,14 +318,36 @@ class PhotometryPreviewWindow(QDialog):
             self.filtered_canvas.axes.set_ylabel('Fluorescence')
             self.filtered_canvas.draw()
             
+            # Parse fit params
+            try:
+                arpls_lambda_val = float(self.arpls_lambda.text())
+            except ValueError:
+                arpls_lambda_val = 1e5
+            arpls_max_iter_val = self.arpls_max_iter.value()
+            try:
+                arpls_tol_val = float(self.arpls_tol.text())
+            except ValueError:
+                arpls_tol_val = 1e-6
+            try:
+                arpls_eps_val = float(self.arpls_eps.text())
+            except ValueError:
+                arpls_eps_val = 1e-8
+            try:
+                arpls_weight_scale_val = float(self.arpls_weight_scale.text())
+            except ValueError:
+                arpls_weight_scale_val = 2.0
+            robust_fit_val = self.robust_fit.isChecked()
+
             # Fit
-            # Temporarily set arpls lambda if arpls
-            orig_lambda = photometry_data.config['Photometry_Processing'].get('arpls_lambda') if hasattr(photometry_data, 'config') else None
-            if not hasattr(photometry_data, 'config'):
-                photometry_data.config = {'Photometry_Processing': {}}
-            photometry_data.config['Photometry_Processing']['arpls_lambda'] = self.arpls_lambda.text()
-            
-            photometry_data.doric_fit(self.fit_type.currentText(), filtered_f0, filtered_f, time_data)
+            photometry_data.doric_fit(
+                self.fit_type.currentText(), filtered_f0, filtered_f, time_data,
+                robust_fit=robust_fit_val,
+                arpls_lambda=arpls_lambda_val,
+                arpls_max_iter=arpls_max_iter_val,
+                arpls_tol=arpls_tol_val,
+                arpls_eps=arpls_eps_val,
+                arpls_weight_scale=arpls_weight_scale_val,
+            )
             
             # Plot Fitted
             self.fitted_canvas.axes.clear()
@@ -1594,6 +1739,10 @@ class FiberPhotometryApp(QMainWindow):
             group_layout = QFormLayout()
             fit_type_combo = None
             arpls_widgets = []
+            robust_fit_widgets = []
+            despike_param_widgets = []
+            despike_checkbox_ref = [None]
+
             # First pass: create fit_type combo if present
             for key in self.config[section]:
                 if key == 'fit_type':
@@ -1604,6 +1753,7 @@ class FiberPhotometryApp(QMainWindow):
                     fit_type_combo.setCurrentText(value)
                     group_layout.addRow(display_key, fit_type_combo)
                     setattr(self, f"{section}_fit_type_combobox", fit_type_combo)
+
             # Second pass: all other keys
             for key in self.config[section]:
                 if key == 'fit_type':
@@ -1611,6 +1761,7 @@ class FiberPhotometryApp(QMainWindow):
                 value = self.config[section][key]
                 display_key = key.replace("_", " ")
                 widget_attr_base = f"{section}_{key}"
+
                 # Multi-select options use the custom widget
                 if key in multibox_options:
                     multicombobox_edit = MultiSelectComboBox()
@@ -1625,26 +1776,26 @@ class FiberPhotometryApp(QMainWindow):
                                     list_item.setCheckState(Qt.Checked)
                                     break
                     group_layout.addRow(display_key, multicombobox_edit)
-                # If the key is one of the file path keys, create a line edit + browse button
+
+                # File path keys: line edit + browse button
                 elif key in file_path_keys:
                     hbox = QHBoxLayout()
                     line_edit = QLineEdit(value)
                     browse_btn = QPushButton("Browse...")
 
-                    def make_browse_handler(le=line_edit, k=key):
+                    def make_browse_handler(le=line_edit, k=key, dk=display_key):
                         def handler():
                             mode = file_path_keys.get(k, 'open')
                             if mode == 'open':
-                                file_path, _ = QFileDialog.getOpenFileName(self, f"Select {display_key}", "", "All Files (*)")
+                                file_path, _ = QFileDialog.getOpenFileName(self, f"Select {dk}", "", "All Files (*)")
                                 if file_path:
                                     le.setText(file_path)
                             elif mode == 'directory':
-                                dir_path = QFileDialog.getExistingDirectory(self, f"Select {display_key}")
+                                dir_path = QFileDialog.getExistingDirectory(self, f"Select {dk}")
                                 if dir_path:
                                     le.setText(dir_path)
                             else:
-                                # default to open file
-                                file_path, _ = QFileDialog.getOpenFileName(self, f"Select {display_key}", "", "All Files (*)")
+                                file_path, _ = QFileDialog.getOpenFileName(self, f"Select {dk}", "", "All Files (*)")
                                 if file_path:
                                     le.setText(file_path)
                         return handler
@@ -1654,139 +1805,229 @@ class FiberPhotometryApp(QMainWindow):
                     hbox.addWidget(browse_btn)
                     setattr(self, f"{widget_attr_base}_line_edit", line_edit)
                     group_layout.addRow(display_key, hbox)
-                # Boolean-ish values (except in Output section) get checkboxes
-                elif value.lower() in ['true', 'false', '1', '0'] and section != "Output":
-                    checkbox = QCheckBox()
-                    checkbox.setChecked(value.lower() == 'true' or value == '1')
-                    group_layout.addRow(display_key, checkbox)
-                    setattr(self, f"{widget_attr_base}_checkbox", checkbox)
+
+                # filter_type combobox
                 elif key == 'filter_type':
                     combo = QComboBox()
                     combo.addItems(['lowpass', 'smoothing'])
                     combo.setCurrentText(value)
                     group_layout.addRow(display_key, combo)
                     setattr(self, f"{widget_attr_base}_combobox", combo)
+
+                # filter_name combobox — options depend on filter_type
                 elif key == 'filter_name':
                     combo = QComboBox()
-                    # Find the corresponding filter_type combobox
-                    filter_type_key = f"{section}_filter_type_combobox"
-                    filter_type_combo = getattr(self, filter_type_key, None)
-                    def update_filter_name_options():
-                        filter_type_val = filter_type_combo.currentText() if filter_type_combo else self.config[section].get('filter_type', 'lowpass')
-                        combo.clear()
-                        if filter_type_val == 'lowpass':
-                            combo.addItems(['butter', 'bessel', 'chebychev'])
-                        elif filter_type_val == 'smoothing':
-                            combo.addItem('savitsky-golay')
-                        # Set to config value if present
-                        combo.setCurrentText(value)
-                    # If filter_type combobox exists, connect signal
-                    if filter_type_combo:
-                        filter_type_combo.currentTextChanged.connect(lambda _: update_filter_name_options())
+                    ft_attr = f"{section}_filter_type_combobox"
+                    ft_combo = getattr(self, ft_attr, None)
+
+                    def update_filter_name_options(ftc=ft_combo, c=combo, v=value):
+                        ftype = ftc.currentText() if ftc else 'lowpass'
+                        c.clear()
+                        if ftype == 'lowpass':
+                            c.addItems(['butter', 'bessel', 'chebychev'])
+                        else:
+                            c.addItem('savitsky-golay')
+                        c.setCurrentText(v)
+
+                    if ft_combo:
+                        ft_combo.currentTextChanged.connect(
+                            lambda _, ftc=ft_combo, c=combo, v=value: update_filter_name_options(ftc, c, v))
                     update_filter_name_options()
                     group_layout.addRow(display_key, combo)
                     setattr(self, f"{widget_attr_base}_combobox", combo)
-                elif key == 'savgol_window' or key == 'savgol_polyorder':
-                    # Only show if filter_name combobox is set to 'savitsky-golay'
-                    filter_name_key = f"{section}_filter_name_combobox"
-                    filter_name_combo = getattr(self, filter_name_key, None)
+
+                # filter_order / filter_cutoff: only shown for lowpass
+                elif key in ('filter_order', 'filter_cutoff'):
+                    ft_attr = f"{section}_filter_type_combobox"
+                    ft_combo = getattr(self, ft_attr, None)
                     spin_box = QSpinBox()
-                    spin_box.setValue(int(value))
-                    label = QLabel(display_key)
-                    group_layout.addRow(label, spin_box)
-                    spin_box.setVisible(False)
-                    label.setVisible(False)
-                    setattr(self, f"{widget_attr_base}_spin_box", spin_box)
-                    def update_savgol_visibility():
-                        visible = filter_name_combo and filter_name_combo.currentText() == 'savitsky-golay'
-                        spin_box.setVisible(visible)
-                        label.setVisible(visible)
-                    if filter_name_combo:
-                        filter_name_combo.currentTextChanged.connect(lambda _: update_savgol_visibility())
-                        update_savgol_visibility()
-                elif key == 'filter_order' or key == 'filter_cutoff':
-                    # Only show if filter_type combobox is set to 'lowpass'
-                    filter_type_key = f"{section}_filter_type_combobox"
-                    filter_type_combo = getattr(self, filter_type_key, None)
-                    spin_box = QSpinBox()
-                    config_default = self.config[section].get(key, None)
                     if key == 'filter_cutoff':
                         spin_box.setRange(1, 1000)
-                        default_value = int(config_default) if config_default and config_default.isdigit() else 1
+                        default_value = int(value) if value.isdigit() else 10
                     else:
                         spin_box.setRange(1, 10)
-                        default_value = int(config_default) if config_default and config_default.isdigit() else 1
+                        default_value = int(value) if value.isdigit() else 4
                     spin_box.setValue(default_value)
                     label = QLabel(display_key)
                     group_layout.addRow(label, spin_box)
                     spin_box.setVisible(False)
                     label.setVisible(False)
                     setattr(self, f"{widget_attr_base}_spin_box", spin_box)
-                    def update_lowpass_visibility():
-                        visible = filter_type_combo and filter_type_combo.currentText() == 'lowpass'
-                        spin_box.setVisible(visible)
-                        label.setVisible(visible)
-                    if filter_type_combo:
-                        filter_type_combo.currentTextChanged.connect(lambda _: update_lowpass_visibility())
-                        update_lowpass_visibility()
-                elif key == 'cheby_ripple':
-                    # Only show if filter_name combobox is 'chebychev' AND filter_type combobox is 'smoothing'
-                    filter_name_key = f"{section}_filter_name_combobox"
-                    filter_type_key = f"{section}_filter_type_combobox"
-                    filter_name_combo = getattr(self, filter_name_key, None)
-                    filter_type_combo = getattr(self, filter_type_key, None)
-                    double_spin_box = QSpinBox()
-                    double_spin_box.setRange(1, 10)
-                    double_spin_box.setValue(int(value) if value.isdigit() else 1)
+
+                    def update_lowpass_vis(ftc=ft_combo, sb=spin_box, lbl=label):
+                        visible = ftc is not None and ftc.currentText() == 'lowpass'
+                        sb.setVisible(visible)
+                        lbl.setVisible(visible)
+
+                    if ft_combo:
+                        ft_combo.currentTextChanged.connect(
+                            lambda _, ftc=ft_combo, sb=spin_box, lbl=label: update_lowpass_vis(ftc, sb, lbl))
+                    update_lowpass_vis()
+
+                # savgol_window / savgol_polyorder: only shown when filter_name == savitsky-golay
+                elif key in ('savgol_window', 'savgol_polyorder'):
+                    fn_attr = f"{section}_filter_name_combobox"
+                    fn_combo = getattr(self, fn_attr, None)
+                    spin_box = QSpinBox()
+                    try:
+                        spin_box.setValue(int(value))
+                    except ValueError:
+                        spin_box.setValue(3)
                     label = QLabel(display_key)
-                    group_layout.addRow(label, double_spin_box)
-                    double_spin_box.setVisible(False)
+                    group_layout.addRow(label, spin_box)
+                    spin_box.setVisible(False)
                     label.setVisible(False)
-                    setattr(self, f"{widget_attr_base}_double_spin_box", double_spin_box)
-                    def update_cheby_visibility():
-                        visible = (
-                            filter_name_combo and filter_type_combo and
-                            filter_name_combo.currentText() == 'chebychev' and
-                            filter_type_combo.currentText() == 'smoothing'
-                        )
-                        double_spin_box.setVisible(visible)
-                        label.setVisible(visible)
-                    if filter_name_combo:
-                        filter_name_combo.currentTextChanged.connect(lambda _: update_cheby_visibility())
-                    if filter_type_combo:
-                        filter_type_combo.currentTextChanged.connect(lambda _: update_cheby_visibility())
-                    update_cheby_visibility()
-                # ARPLS options: only show if fit_type is 'arpls'
+                    setattr(self, f"{widget_attr_base}_spin_box", spin_box)
+
+                    def update_savgol_vis(fnc=fn_combo, sb=spin_box, lbl=label):
+                        visible = fnc is not None and fnc.currentText() == 'savitsky-golay'
+                        sb.setVisible(visible)
+                        lbl.setVisible(visible)
+
+                    if fn_combo:
+                        fn_combo.currentTextChanged.connect(
+                            lambda _, fnc=fn_combo, sb=spin_box, lbl=label: update_savgol_vis(fnc, sb, lbl))
+                    update_savgol_vis()
+
+                # cheby_ripple: float QLineEdit, visible only when filter_type==lowpass AND filter_name==chebychev
+                elif key == 'cheby_ripple':
+                    fn_attr = f"{section}_filter_name_combobox"
+                    ft_attr = f"{section}_filter_type_combobox"
+                    fn_combo = getattr(self, fn_attr, None)
+                    ft_combo = getattr(self, ft_attr, None)
+                    ripple_edit = QLineEdit(value)
+                    label = QLabel(display_key)
+                    group_layout.addRow(label, ripple_edit)
+                    ripple_edit.setVisible(False)
+                    label.setVisible(False)
+                    setattr(self, f"{widget_attr_base}_line_edit", ripple_edit)
+
+                    def update_cheby_vis(fnc=fn_combo, ftc=ft_combo, w=ripple_edit, lbl=label):
+                        visible = (fnc is not None and ftc is not None and
+                                   fnc.currentText() == 'chebychev' and
+                                   ftc.currentText() == 'lowpass')
+                        w.setVisible(visible)
+                        lbl.setVisible(visible)
+
+                    if fn_combo:
+                        fn_combo.currentTextChanged.connect(
+                            lambda _, fnc=fn_combo, ftc=ft_combo, w=ripple_edit, lbl=label: update_cheby_vis(fnc, ftc, w, lbl))
+                    if ft_combo:
+                        ft_combo.currentTextChanged.connect(
+                            lambda _, fnc=fn_combo, ftc=ft_combo, w=ripple_edit, lbl=label: update_cheby_vis(fnc, ftc, w, lbl))
+                    update_cheby_vis()
+
+                # despike: checkbox — despike_window / despike_threshold depend on this
+                elif key == 'despike':
+                    checkbox = QCheckBox()
+                    checkbox.setChecked(value.lower() in ('true', '1'))
+                    group_layout.addRow(display_key, checkbox)
+                    setattr(self, f"{widget_attr_base}_checkbox", checkbox)
+                    despike_checkbox_ref[0] = checkbox
+
+                # despike_window: integer spinbox, only visible when despike is checked
+                elif key == 'despike_window':
+                    spin_box = QSpinBox()
+                    spin_box.setRange(3, 100001)
+                    spin_box.setSingleStep(2)
+                    try:
+                        spin_box.setValue(int(value))
+                    except ValueError:
+                        spin_box.setValue(2001)
+                    label = QLabel(display_key)
+                    group_layout.addRow(label, spin_box)
+                    spin_box.setVisible(False)
+                    label.setVisible(False)
+                    setattr(self, f"{widget_attr_base}_spin_box", spin_box)
+                    despike_param_widgets.append((label, spin_box))
+
+                # despike_threshold: float QLineEdit, only visible when despike is checked
+                elif key == 'despike_threshold':
+                    threshold_edit = QLineEdit(value)
+                    label = QLabel(display_key)
+                    group_layout.addRow(label, threshold_edit)
+                    threshold_edit.setVisible(False)
+                    label.setVisible(False)
+                    setattr(self, f"{widget_attr_base}_line_edit", threshold_edit)
+                    despike_param_widgets.append((label, threshold_edit))
+
+                # robust_fit: checkbox, only visible when fit_type == linear
+                elif key == 'robust_fit':
+                    checkbox = QCheckBox()
+                    checkbox.setChecked(value.lower() in ('true', '1'))
+                    label = QLabel(display_key)
+                    group_layout.addRow(label, checkbox)
+                    setattr(self, f"{widget_attr_base}_checkbox", checkbox)
+                    robust_fit_widgets.append((label, checkbox))
+
+                # ARPLS options: all collected for show/hide; booleans get checkboxes, others get line edits
                 elif key.startswith('arpls_'):
-                    arpls_widget = QLineEdit(value)
-                    setattr(self, f"{widget_attr_base}_line_edit", arpls_widget)
+                    if value.lower() in ('true', 'false', '1', '0'):
+                        arpls_widget = QCheckBox()
+                        arpls_widget.setChecked(value.lower() in ('true', '1'))
+                        setattr(self, f"{widget_attr_base}_checkbox", arpls_widget)
+                    else:
+                        arpls_widget = QLineEdit(value)
+                        setattr(self, f"{widget_attr_base}_line_edit", arpls_widget)
                     label = QLabel(display_key)
                     group_layout.addRow(label, arpls_widget)
                     arpls_widgets.append((label, arpls_widget))
+
+                # Generic boolean values (except Output section) get checkboxes
+                elif value.lower() in ('true', 'false', '1', '0') and section != "Output":
+                    checkbox = QCheckBox()
+                    checkbox.setChecked(value.lower() in ('true', '1'))
+                    group_layout.addRow(display_key, checkbox)
+                    setattr(self, f"{widget_attr_base}_checkbox", checkbox)
+
+                # Everything else: plain QLineEdit
                 else:
                     line_edit = QLineEdit(value)
                     setattr(self, f"{widget_attr_base}_line_edit", line_edit)
                     group_layout.addRow(display_key, line_edit)
-            # If fit_type_combo and arpls_widgets exist, connect visibility
+
+            # Connect arpls_ widget visibility to fit_type (only shown for arpls)
             if fit_type_combo and arpls_widgets:
-                def update_arpls_visibility():
-                    if fit_type_combo is not None:
-                        is_arpls = fit_type_combo.currentText() == 'arpls'
-                        for label, widget in arpls_widgets:
-                            label.setVisible(is_arpls)
-                            widget.setVisible(is_arpls)
-                if fit_type_combo is not None:
-                    fit_type_combo.currentTextChanged.connect(lambda _: update_arpls_visibility())
-                    update_arpls_visibility()
+                def update_arpls_visibility(ftc=fit_type_combo, widgets=list(arpls_widgets)):
+                    is_arpls = ftc.currentText() == 'arpls'
+                    for lbl, w in widgets:
+                        lbl.setVisible(is_arpls)
+                        w.setVisible(is_arpls)
+                fit_type_combo.currentTextChanged.connect(
+                    lambda _, ftc=fit_type_combo, widgets=list(arpls_widgets): update_arpls_visibility(ftc, widgets))
+                update_arpls_visibility()
+
+            # Connect robust_fit visibility to fit_type (only shown when linear)
+            if fit_type_combo and robust_fit_widgets:
+                def update_robust_visibility(ftc=fit_type_combo, widgets=list(robust_fit_widgets)):
+                    visible = ftc.currentText() == 'linear'
+                    for lbl, w in widgets:
+                        lbl.setVisible(visible)
+                        w.setVisible(visible)
+                fit_type_combo.currentTextChanged.connect(
+                    lambda _, ftc=fit_type_combo, widgets=list(robust_fit_widgets): update_robust_visibility(ftc, widgets))
+                update_robust_visibility()
+
+            # Connect despike_window / despike_threshold visibility to despike checkbox
+            if despike_checkbox_ref[0] and despike_param_widgets:
+                def update_despike_param_visibility(cb=despike_checkbox_ref[0], widgets=list(despike_param_widgets)):
+                    visible = cb.isChecked()
+                    for lbl, w in widgets:
+                        lbl.setVisible(visible)
+                        w.setVisible(visible)
+                despike_checkbox_ref[0].stateChanged.connect(
+                    lambda _, cb=despike_checkbox_ref[0], widgets=list(despike_param_widgets): update_despike_param_visibility(cb, widgets))
+                update_despike_param_visibility()
+
             group_box.setLayout(group_layout)
             content_layout.addWidget(group_box)
-            
+
             # Add preview button underneath Photometry Processing group
             if section == "Photometry_Processing":
                 preview_btn = QPushButton("Preview Photometry Signal")
                 preview_btn.clicked.connect(self.open_photometry_preview)
                 content_layout.addWidget(preview_btn)
-                
+
         save_button = QPushButton("Save Changes")
         save_button.clicked.connect(self.save_config_changes_to_current_file)
         content_layout.addWidget(save_button)
