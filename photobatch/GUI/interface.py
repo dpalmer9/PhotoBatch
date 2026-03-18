@@ -831,19 +831,61 @@ class FiberPhotometryApp(QMainWindow):
                 header = data.columns[col].lower()
                 cell_val = init_vals.get(header, "")
 
-                if header == 'event_type' and self.template_loaded:
+                if (header == 'event_type' or header.startswith('filter_type')) and self.template_loaded:
+                    suffix = header.replace('event_type', '').replace('filter_type', '')
+                    t_name = 'event_type' if 'event_type' in header else 'filter_type' + suffix
+                    n_name = 'event_name' if 'event_type' in header else 'filter_name' + suffix
+                    g_name = 'event_group' if 'event_type' in header else 'filter_group' + suffix
+
                     event_type_combo = QComboBox()
                     event_type_combo.addItems(self.unique_event_types)
                     event_type_combo.setCurrentText(cell_val)
-                    event_type_combo.currentTextChanged.connect(lambda text, r=row: self.filter_event_data(r, text, table_widget))
+                    event_type_combo.currentTextChanged.connect(
+                        lambda text, r=row, tn=t_name, nn=n_name, gn=g_name: 
+                        self.filter_event_data(r, text, table_widget, type_col_name=tn, name_col_name=nn, group_col_name=gn)
+                    )
+                    item = QTableWidgetItem(cell_val)
+                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                    table_widget.setItem(row, col, item)
                     table_widget.setCellWidget(row, col, event_type_combo)
-                elif header == 'event_name' and self.template_loaded:
+
+                elif (header == 'event_name' or header.startswith('filter_name')) and self.template_loaded:
+                    suffix = header.replace('event_name', '').replace('filter_name', '')
+                    t_name = 'event_type' if 'event_name' in header else 'filter_type' + suffix
+                    n_name = 'event_name' if 'event_name' in header else 'filter_name' + suffix
+                    g_name = 'event_group' if 'event_name' in header else 'filter_group' + suffix
+
                     event_name_combo = QComboBox()
-                    event_name_combo.currentTextChanged.connect(lambda text, r=row: self.filter_event_group(r, text, table_widget))
+                    event_name_combo.currentTextChanged.connect(
+                        lambda text, r=row, tn=t_name, nn=n_name, gn=g_name: 
+                        self.filter_event_group(r, text, table_widget, type_col_name=tn, name_col_name=nn, group_col_name=gn)
+                    )
+                    item = QTableWidgetItem(cell_val)
+                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                    table_widget.setItem(row, col, item)
                     table_widget.setCellWidget(row, col, event_name_combo)
-                elif header == 'event_group' and self.template_loaded:
+
+                elif (header == 'event_group' or header.startswith('filter_group')) and self.template_loaded:
                     event_group_combo = QComboBox()
+                    item = QTableWidgetItem(cell_val)
+                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                    table_widget.setItem(row, col, item)
                     table_widget.setCellWidget(row, col, event_group_combo)
+
+                elif header.startswith('filter_prior') and self.template_loaded:
+                    filter_prior_combo = QComboBox()
+                    filter_prior_combo.addItems(['True', 'False'])
+                    # Convert Binary 0/1 to True/False
+                    if cell_val == '0':
+                        cell_val = 'False'
+                    elif cell_val == '1':
+                        cell_val = 'True'
+                    filter_prior_combo.setCurrentText(cell_val)
+                    item = QTableWidgetItem(cell_val)
+                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                    table_widget.setItem(row, col, item)
+                    table_widget.setCellWidget(row, col, filter_prior_combo)
+
                 elif header == 'num_filter':
                     num_filter_spinbox = QSpinBox()
                     try:
@@ -852,9 +894,19 @@ class FiberPhotometryApp(QMainWindow):
                         f_val = 0
                     num_filter_spinbox.setValue(f_val)
                     num_filter_spinbox.valueChanged.connect(lambda value, r=row: self.adjust_filter_columns(r, value, table_widget))
+                    
+                    # Fix: set a non-editable item for the cell to prevent the table editor from interfering
+                    # with the spinbox buttons.
+                    item = QTableWidgetItem(str(f_val))
+                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                    table_widget.setItem(row, col, item)
                     table_widget.setCellWidget(row, col, num_filter_spinbox)
+
                 elif header in ('abet_path', 'doric_path'):
                     fp_widget = FilePathWidget(cell_val)
+                    item = QTableWidgetItem(cell_val)
+                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                    table_widget.setItem(row, col, item)
                     table_widget.setCellWidget(row, col, fp_widget)
                 else:
                     item = QTableWidgetItem(cell_val)
@@ -866,6 +918,21 @@ class FiberPhotometryApp(QMainWindow):
                 self.filter_event_data(row, init_vals['event_type'], table_widget, 
                                        initial_name=init_vals.get('event_name'), 
                                        initial_group=init_vals.get('event_group'))
+            # Initialize dropdown cascade for any filter_name{i} based on filter_type{i}
+            # Calculate max value of init_vals['num_filter']
+            if self.template_loaded and 'num_filter' in init_vals:
+                try:
+                    max_filter = int(float(init_vals['num_filter']))
+                except (ValueError, TypeError):
+                    max_filter = 0
+                for i in range(1, max_filter + 1):
+                    if f'filter_type{i}' in init_vals and f'filter_name{i}' in init_vals:
+                        self.filter_event_data(row, init_vals[f'filter_type{i}'], table_widget, 
+                                               initial_name=init_vals.get(f'filter_name{i}'), 
+                                               initial_group=init_vals.get(f'filter_group{i}'),
+                                               type_col_name=f'filter_type{i}',
+                                               name_col_name=f'filter_name{i}',
+                                               group_col_name=f'filter_group{i}')
         # Ensure columns and rows are sized to show content and refresh the widget so rows become visible
         table_widget.resizeColumnsToContents()
         table_widget.resizeRowsToContents()
@@ -884,11 +951,11 @@ class FiberPhotometryApp(QMainWindow):
                 return col
         return -1
 
-    def filter_event_data(self, row, event_type, table_widget, initial_name=None, initial_group=None):
+    def filter_event_data(self, row, event_type, table_widget, initial_name=None, initial_group=None, type_col_name='event_type', name_col_name='event_name', group_col_name='event_group'):
         if not self.template_loaded:
             return
         filtered_names = self.event_data[self.event_data['Evnt_Name'] == event_type]['Item_Name'].dropna().unique()
-        name_col = self._find_column(table_widget, 'event_name')
+        name_col = self._find_column(table_widget, name_col_name)
         name_combo = table_widget.cellWidget(row, name_col) if name_col >= 0 else None
         if not isinstance(name_combo, QComboBox):
             return
@@ -901,18 +968,18 @@ class FiberPhotometryApp(QMainWindow):
         name_combo.blockSignals(False)
         
         current_name = name_combo.currentText()
-        self.filter_event_group(row, current_name, table_widget, initial_group=initial_group)
+        self.filter_event_group(row, current_name, table_widget, initial_group=initial_group, type_col_name=type_col_name, name_col_name=name_col_name, group_col_name=group_col_name)
 
-    def filter_event_group(self, row, event_name, table_widget, initial_group=None):
+    def filter_event_group(self, row, event_name, table_widget, initial_group=None, type_col_name='event_type', name_col_name='event_name', group_col_name='event_group'):
         if not self.template_loaded:
             return
-        type_col = self._find_column(table_widget, 'event_type')
+        type_col = self._find_column(table_widget, type_col_name)
         event_type_combo = table_widget.cellWidget(row, type_col) if type_col >= 0 else None
         if not isinstance(event_type_combo, QComboBox):
             return
         event_type = event_type_combo.currentText()
         filtered_groups = self.event_data[(self.event_data['Evnt_Name'] == event_type) & (self.event_data['Item_Name'] == event_name)]['Group_ID'].dropna().unique()
-        group_col = self._find_column(table_widget, 'event_group')
+        group_col = self._find_column(table_widget, group_col_name)
         group_combo = table_widget.cellWidget(row, group_col) if group_col >= 0 else None
         if not isinstance(group_combo, QComboBox):
             return
@@ -929,25 +996,60 @@ class FiberPhotometryApp(QMainWindow):
         table_widget.insertRow(current_row_count)
         for col in range(table_widget.columnCount()):
             header = table_widget.horizontalHeaderItem(col).text().lower()
-            if header == 'event_type' and self.template_loaded:
+            if (header == 'event_type' or header.startswith('filter_type')) and self.template_loaded:
+                suffix = header.replace('event_type', '').replace('filter_type', '')
+                t_name = 'event_type' if 'event_type' in header else 'filter_type' + suffix
+                n_name = 'event_name' if 'event_type' in header else 'filter_name' + suffix
+                g_name = 'event_group' if 'event_type' in header else 'filter_group' + suffix
+
                 event_type_combo = QComboBox()
+                event_type_combo.currentTextChanged.connect(
+                    lambda text, r=current_row_count, tn=t_name, nn=n_name, gn=g_name: 
+                    self.filter_event_data(r, text, table_widget, type_col_name=tn, name_col_name=nn, group_col_name=gn)
+                )
                 event_type_combo.addItems(self.unique_event_types)
-                event_type_combo.currentTextChanged.connect(lambda text, r=current_row_count: self.filter_event_data(r, text, table_widget))
+                item = QTableWidgetItem("")
+                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                table_widget.setItem(current_row_count, col, item)
                 table_widget.setCellWidget(current_row_count, col, event_type_combo)
-            elif header == 'event_name' and self.template_loaded:
+
+            elif (header == 'event_name' or header.startswith('filter_name')) and self.template_loaded:
+                suffix = header.replace('event_name', '').replace('filter_name', '')
+                t_name = 'event_type' if 'event_name' in header else 'filter_type' + suffix
+                n_name = 'event_name' if 'event_name' in header else 'filter_name' + suffix
+                g_name = 'event_group' if 'event_name' in header else 'filter_group' + suffix
+
                 event_name_combo = QComboBox()
-                event_name_combo.currentTextChanged.connect(lambda text, r=current_row_count: self.filter_event_group(r, text, table_widget))
+                event_name_combo.currentTextChanged.connect(
+                    lambda text, r=current_row_count, tn=t_name, nn=n_name, gn=g_name: 
+                    self.filter_event_group(r, text, table_widget, type_col_name=tn, name_col_name=nn, group_col_name=gn)
+                )
+                item = QTableWidgetItem("")
+                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                table_widget.setItem(current_row_count, col, item)
                 table_widget.setCellWidget(current_row_count, col, event_name_combo)
-            elif header == 'event_group' and self.template_loaded:
+
+            elif (header == 'event_group' or header.startswith('filter_group')) and self.template_loaded:
                 event_group_combo = QComboBox()
+                item = QTableWidgetItem("")
+                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                table_widget.setItem(current_row_count, col, item)
                 table_widget.setCellWidget(current_row_count, col, event_group_combo)
+
             elif header == 'num_filter':
                 num_filter_spinbox = QSpinBox()
                 num_filter_spinbox.setValue(0)
                 num_filter_spinbox.valueChanged.connect(lambda value, r=current_row_count: self.adjust_filter_columns(r, value, table_widget))
+                item = QTableWidgetItem("0")
+                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                table_widget.setItem(current_row_count, col, item)
                 table_widget.setCellWidget(current_row_count, col, num_filter_spinbox)
+
             elif header in ('abet_path', 'doric_path'):
                 fp_widget = FilePathWidget()
+                item = QTableWidgetItem("")
+                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                table_widget.setItem(current_row_count, col, item)
                 table_widget.setCellWidget(current_row_count, col, fp_widget)
             else:
                 item = QTableWidgetItem("")
@@ -956,25 +1058,105 @@ class FiberPhotometryApp(QMainWindow):
 
         # Initialize dropdowns for the new row if template is loaded
         if self.template_loaded:
+            # Initialize main event
             type_col = self._find_column(table_widget, 'event_type')
             type_combo = table_widget.cellWidget(current_row_count, type_col) if type_col >= 0 else None
             if isinstance(type_combo, QComboBox) and type_combo.count() > 0:
                 self.filter_event_data(current_row_count, type_combo.currentText(), table_widget)
+            
+            # Initialize any filter dropdowns and ensure they match num_filter=0 state
+            num_filter_col = self._find_column(table_widget, 'num_filter')
+            num_filters = 0
+            if num_filter_col >= 0:
+                spin = table_widget.cellWidget(current_row_count, num_filter_col)
+                if isinstance(spin, QSpinBox):
+                    num_filters = spin.value()
+            
+            # Always call adjust_filter_columns to ensure proper state for the new row
+            self.adjust_filter_columns(current_row_count, num_filters, table_widget)
+            
+            # If for some reason num_filters > 0, initialize cascades
+            for i in range(1, num_filters + 1):
+                f_type_col = self._find_column(table_widget, f'filter_type{i}')
+                f_type_combo = table_widget.cellWidget(current_row_count, f_type_col) if f_type_col >= 0 else None
+                if isinstance(f_type_combo, QComboBox) and f_type_combo.count() > 0:
+                    self.filter_event_data(current_row_count, f_type_combo.currentText(), table_widget,
+                                           type_col_name=f'filter_type{i}',
+                                           name_col_name=f'filter_name{i}',
+                                           group_col_name=f'filter_group{i}')
 
     def adjust_filter_columns(self, row, num_filters, table_widget):
         # Determine fixed-column count dynamically so sheets with or without
         # event_alias (and any other future leading columns) are handled correctly.
         num_filter_col = self._find_column(table_widget, 'num_filter')
         fixed_cols = (num_filter_col + 1) if num_filter_col >= 0 else 6
-        total_columns = fixed_cols + (num_filters * 6)
+        
+        # Calculate maximum needed columns across all rows to avoid truncating data
+        max_filters = 0
+        for r in range(table_widget.rowCount()):
+            spin = table_widget.cellWidget(r, num_filter_col)
+            if isinstance(spin, QSpinBox):
+                max_filters = max(max_filters, spin.value())
+        
+        total_columns = fixed_cols + (max_filters * 6)
         table_widget.setColumnCount(total_columns)
-        for i in range(1, num_filters + 1):
+        
+        for i in range(1, max_filters + 1):
             base_index = fixed_cols + (i - 1) * 6
             headers = [f'filter_type{i}', f'filter_name{i}', f'filter_group{i}', f'filter_arg{i}', f'filter_eval{i}', f'filter_prior{i}']
             for j, header in enumerate(headers):
-                table_widget.setHorizontalHeaderItem(base_index + j, QTableWidgetItem(header))
-                item = QTableWidgetItem("")
-                table_widget.setItem(row, base_index + j, item)
+                if table_widget.horizontalHeaderItem(base_index + j) is None:
+                    table_widget.setHorizontalHeaderItem(base_index + j, QTableWidgetItem(header))
+                
+                # Only initialize widgets for the current row's active filters
+                if i <= num_filters:
+                    h_lower = header.lower()
+                    if f'filter_type{i}' in h_lower and self.template_loaded:
+                        t_name, n_name, g_name = f'filter_type{i}', f'filter_name{i}', f'filter_group{i}'
+                        combo = QComboBox()
+                        combo.addItems(self.unique_event_types)
+                        combo.currentTextChanged.connect(
+                            lambda text, r=row, tn=t_name, nn=n_name, gn=g_name: 
+                            self.filter_event_data(r, text, table_widget, type_col_name=tn, name_col_name=nn, group_col_name=gn)
+                        )
+                        table_widget.setCellWidget(row, base_index + j, combo)
+                        # Initialize next in cascade
+                        self.filter_event_data(row, combo.currentText(), table_widget, type_col_name=t_name, name_col_name=n_name, group_col_name=g_name)
+                    elif f'filter_name{i}' in h_lower and self.template_loaded:
+                        t_name, n_name, g_name = f'filter_type{i}', f'filter_name{i}', f'filter_group{i}'
+                        combo = QComboBox()
+                        combo.currentTextChanged.connect(
+                            lambda text, r=row, tn=t_name, nn=n_name, gn=g_name: 
+                            self.filter_event_group(r, text, table_widget, type_col_name=tn, name_col_name=nn, group_col_name=gn)
+                        )
+                        table_widget.setCellWidget(row, base_index + j, combo)
+                    elif f'filter_group{i}' in h_lower and self.template_loaded:
+                        combo = QComboBox()
+                        table_widget.setCellWidget(row, base_index + j, combo)
+
+                    # Set filter_prior{i} to a ComboBox with values True and False corresponding to 1 and 0
+                    elif f'filter_prior{i}' in h_lower and self.template_loaded:
+                        combo = QComboBox()
+                        combo.addItems(["True", "False"])
+                        table_widget.setCellWidget(row, base_index + j, combo)
+                        combo.setCurrentText("True")
+                    
+                    # Ensure item exists and is non-editable for widget columns
+                    item = table_widget.item(row, base_index + j)
+                    if item is None:
+                        item = QTableWidgetItem("")
+                        table_widget.setItem(row, base_index + j, item)
+                    if h_lower.startswith('filter_type') or h_lower.startswith('filter_name') or h_lower.startswith('filter_group'):
+                        item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                else:
+                    # Clear widget if filter is no longer active for this row
+                    table_widget.setCellWidget(row, base_index + j, None)
+                    item = table_widget.item(row, base_index + j)
+                    if item is None:
+                        item = QTableWidgetItem("")
+                        table_widget.setItem(row, base_index + j, item)
+                    item.setFlags(item.flags() | Qt.ItemIsEditable)
+
         table_widget.resizeColumnsToContents()
 
     def remove_row(self, table_widget):
@@ -995,6 +1177,10 @@ class FiberPhotometryApp(QMainWindow):
                     widget = table_widget.cellWidget(row, col)
                     if isinstance(widget, QComboBox):
                         row_data.append(widget.currentText())
+                    elif isinstance(widget, QSpinBox):
+                        row_data.append(str(widget.value()))
+                    elif isinstance(widget, QCheckBox):
+                        row_data.append("True" if widget.isChecked() else "False")
                     elif isinstance(widget, FilePathWidget):
                         row_data.append(widget.text())
                     else:
