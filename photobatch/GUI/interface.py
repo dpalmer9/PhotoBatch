@@ -1105,11 +1105,10 @@ class FiberPhotometryApp(QMainWindow):
             self.results_animal_select.blockSignals(True)
             self.results_date_select.blockSignals(True)
             self.results_animal_select.clear()
-            # Insert Combined at top if exists
-            if combined_exists:
-                self.results_animal_select.addItem('Combined')
+            self.results_animal_select.addItem('Combine')
+            self.results_animal_select.addItem('All')
             for a in animals:
-                self.results_animal_select.addItem(a)
+                self.results_animal_select.addItem(str(a))
             # Default date list empty
             self.results_date_select.clear()
             self.results_animal_select.blockSignals(False)
@@ -1171,11 +1170,13 @@ class FiberPhotometryApp(QMainWindow):
         self.results_date_select.clear()
         if not animal or not self.analysis_results:
             return
-        if animal == 'Combined':
-            self.results_date_select.addItem('Combined')
-            self.update_results_behavior_select()
-            return
-        dates = sorted({res.get('date') for res in self.analysis_results if res.get('animal_id') == animal and res.get('date')})
+        
+        if animal in ['Combine', 'All']:
+            dates = sorted({res.get('date') for res in self.analysis_results if res.get('animal_id') and res.get('date')})
+        else:
+            dates = sorted({res.get('date') for res in self.analysis_results if str(res.get('animal_id')) == animal and res.get('date')})
+            
+        self.results_date_select.addItem('Combine')
         self.results_date_select.addItem('All')
         for d in dates:
             self.results_date_select.addItem(str(d))
@@ -1191,19 +1192,18 @@ class FiberPhotometryApp(QMainWindow):
             return
         
         def matches(res):
-            a = res.get('animal_id')
-            d = res.get('date')
-            if selected_animal == 'Combined':
-                if a:
-                    return False
-            else:
-                if a != selected_animal:
-                    return False
-            if selected_date and selected_date not in ['All', 'Combined']:
-                return d == selected_date
+            if not res.get('animal_id'): 
+                return False
+            a = str(res.get('animal_id'))
+            d = str(res.get('date'))
+            if selected_animal not in ['Combine', 'All'] and a != selected_animal:
+                return False
+            if selected_date and selected_date not in ['Combine', 'All'] and d != selected_date:
+                return False
             return True
             
         behaviors = sorted(list({res.get('behavior') for res in self.analysis_results if matches(res) and res.get('behavior')}))
+        self.results_behavior_select.addItem('Combine')
         self.results_behavior_select.addItem('All')
         for b in behaviors:
             self.results_behavior_select.addItem(str(b))
@@ -1220,62 +1220,85 @@ class FiberPhotometryApp(QMainWindow):
             self.results_table.setColumnCount(0)
             return
 
-        # Filter results for the selected animal, date, and behavior
+        # We only consider the individual results to do grouping here
+        valid_results = [res for res in self.analysis_results if res.get('animal_id')]
+
         def matches_selection(res):
-            res_animal = res.get('animal_id')
-            res_date = res.get('date')
-            res_behavior = res.get('behavior')
+            res_animal = str(res.get('animal_id', ''))
+            res_date = str(res.get('date', ''))
+            res_behavior = str(res.get('behavior', ''))
             
-            if selected_animal == 'Combined':
-                if res_animal:
-                    return False
-            else:
-                if res_animal != selected_animal:
-                    return False
-            if selected_date and selected_date not in ['Combined', 'All']:
-                if res_date != selected_date:
-                    return False
-            if selected_behavior and selected_behavior != 'All':
-                if res_behavior != selected_behavior:
-                    return False
+            if selected_animal not in ['Combine', 'All'] and res_animal != selected_animal:
+                return False
+            if selected_date and selected_date not in ['Combine', 'All'] and res_date != selected_date:
+                return False
+            if selected_behavior and selected_behavior not in ['Combine', 'All'] and res_behavior != selected_behavior:
+                return False
             return True
 
-        filtered_results = [res for res in self.analysis_results if matches_selection(res)]
+        filtered_results = [res for res in valid_results if matches_selection(res)]
+
+        # Group and compute averages
+        grouped_results = {}
+        for res in filtered_results:
+            grp_animal = 'Combine' if selected_animal == 'Combine' else str(res.get('animal_id', ''))
+            grp_date = 'Combine' if selected_date == 'Combine' else str(res.get('date', ''))
+            grp_behavior = 'Combine' if selected_behavior == 'Combine' else str(res.get('behavior', ''))
+            grp_time = 'Combine' if selected_date == 'Combine' else str(res.get('time', ''))
+            
+            key = (grp_animal, grp_date, grp_time, grp_behavior)
+            if key not in grouped_results:
+                grouped_results[key] = {'max_peaks': [], 'aucs': []}
+                
+            if res.get('max_peak') is not None:
+                try: grouped_results[key]['max_peaks'].append(float(res['max_peak']))
+                except ValueError: pass
+            if res.get('auc') is not None:
+                try: grouped_results[key]['aucs'].append(float(res['auc']))
+                except ValueError: pass
 
         # Determine dynamic columns
-        include_animal = (selected_animal == 'Combined')
-        include_date = (selected_date in ['Combined', 'All'])
+        include_animal = (selected_animal != 'Combine')
+        include_date = (selected_date != 'Combine')
+        include_behavior = (selected_behavior != 'Combine')
         
         columns = []
-        if include_animal:
-            columns.append('Animal')
+        if include_animal: columns.append('Animal')
         if include_date:
             columns.append('Date')
             columns.append('Time')
-        columns.extend(['Behavior', 'Max Peak', 'AUC'])
+        if include_behavior: columns.append('Behavior')
+        columns.extend(['Max Peak', 'AUC'])
 
-        self.results_table.setRowCount(len(filtered_results))
+        self.results_table.setRowCount(len(grouped_results))
         self.results_table.setColumnCount(len(columns))
         self.results_table.setHorizontalHeaderLabels(columns)
         
-        for i, res in enumerate(filtered_results):
+        for i, (key, vals) in enumerate(grouped_results.items()):
             col_idx = 0
+            grp_animal, grp_date, grp_time, grp_behavior = key
+            
             if include_animal:
-                self.results_table.setItem(i, col_idx, QTableWidgetItem(str(res.get('animal_id', 'Combined'))))
+                self.results_table.setItem(i, col_idx, QTableWidgetItem(grp_animal))
                 col_idx += 1
             if include_date:
-                self.results_table.setItem(i, col_idx, QTableWidgetItem(str(res.get('date', 'All'))))
+                self.results_table.setItem(i, col_idx, QTableWidgetItem(grp_date))
                 col_idx += 1
-                self.results_table.setItem(i, col_idx, QTableWidgetItem(str(res.get('time', ''))))
+                self.results_table.setItem(i, col_idx, QTableWidgetItem(grp_time))
                 col_idx += 1
-                
-            self.results_table.setItem(i, col_idx, QTableWidgetItem(str(res.get('behavior', ''))))
+            if include_behavior:
+                self.results_table.setItem(i, col_idx, QTableWidgetItem(grp_behavior))
+                col_idx += 1
+
+            max_peaks = vals['max_peaks']
+            aucs = vals['aucs']
+            
+            avg_max_peak = sum(max_peaks) / len(max_peaks) if max_peaks else None
+            avg_auc = sum(aucs) / len(aucs) if aucs else None
+            
+            self.results_table.setItem(i, col_idx, QTableWidgetItem(f"{avg_max_peak:.4f}" if avg_max_peak is not None else 'N/A'))
             col_idx += 1
-            max_peak = res.get('max_peak')
-            auc = res.get('auc')
-            self.results_table.setItem(i, col_idx, QTableWidgetItem(f"{float(max_peak):.4f}" if max_peak is not None else 'N/A'))
-            col_idx += 1
-            self.results_table.setItem(i, col_idx, QTableWidgetItem(f"{float(auc):.4f}" if auc is not None else 'N/A'))
+            self.results_table.setItem(i, col_idx, QTableWidgetItem(f"{avg_auc:.4f}" if avg_auc is not None else 'N/A'))
             
         self.results_table.resizeColumnsToContents()
 
