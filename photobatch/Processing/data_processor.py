@@ -344,6 +344,11 @@ class PhotometryData:
             condition_event_names = ['Condition Event']
             variable_event_names = ['Variable Event']
             display_event_names = ['Whisker - Display Image']
+            if filter_before == 'True':
+                filter_before = 1
+            elif filter_before == 'False':
+                filter_before = 0
+
             if filter_type in condition_event_names:
                 filter_event_abet = abet_data.loc[(abet_data[self.event_name_col] == str(filter_type)) & (
                             abet_data['Group_ID'] == str(int(filter_group))), :]
