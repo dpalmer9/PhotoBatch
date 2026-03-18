@@ -997,7 +997,7 @@ class PhotometryData:
             auc_values = []
             time_series = np.linspace(event_start, event_end, num=len(self.partial_dataframe))
             for col in self.partial_dataframe.columns:
-                auc_values.append(np.trapz(y=self.partial_dataframe[col], x=time_series))
+                auc_values.append(np.trapezoid(y=self.partial_dataframe[col], x=time_series))
             return np.mean(auc_values)
         return 0
 
