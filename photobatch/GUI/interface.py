@@ -1137,7 +1137,7 @@ class FiberPhotometryApp(QMainWindow):
         self.vis_date_select.list_widget.itemChanged.connect(self.update_vis_behavior_select)
         
         self.vis_date_mode = QComboBox()
-        self.vis_date_mode.addItems(["Date", "Date Time", "Order"])
+        self.vis_date_mode.addItems(["Date", "Date Time", "Order", "First/Last"])
         self.vis_date_mode.currentTextChanged.connect(self.update_vis_date_select)
         
         self.vis_date_treatment = QComboBox()
@@ -1285,6 +1285,14 @@ class FiberPhotometryApp(QMainWindow):
             return
         
         mode = self.vis_date_mode.currentText() if hasattr(self, 'vis_date_mode') else "Date"
+
+        if mode == "First/Last":
+            self.vis_date_select.add_option('All')
+            self.vis_date_select.add_option('First')
+            self.vis_date_select.add_option('Last')
+            self.update_vis_behavior_select()
+            return
+
         dates = set()
         for res in self.analysis_results:
             a = res.get('animal_id')
@@ -1461,6 +1469,45 @@ class FiberPhotometryApp(QMainWindow):
 
         mode = self.vis_date_mode.currentText() if hasattr(self, 'vis_date_mode') else "Date"
 
+        if mode == "First/Last":
+            # Build per-animal first/last datetime mapping
+            animal_datetime_map = {}
+            for res in self.analysis_results:
+                a = str(res.get('animal_id'))
+                if 'All' not in selected_animals and a not in selected_animals:
+                    continue
+                dt = res.get('datetime', res.get('date'))
+                if dt is None:
+                    continue
+                animal_datetime_map.setdefault(a, []).append(dt)
+            animal_first_last = {}
+            for a, dts in animal_datetime_map.items():
+                try:
+                    sorted_dts = sorted(set(dts))
+                except TypeError:
+                    sorted_dts = sorted(set(dts), key=str)
+                animal_first_last[a] = {
+                    'First': sorted_dts[0] if sorted_dts else None,
+                    'Last': sorted_dts[-1] if sorted_dts else None,
+                }
+
+            def matches_first_last(res):
+                a = str(res.get('animal_id'))
+                if 'All' not in selected_animals and a not in selected_animals:
+                    return False
+                dt = res.get('datetime', res.get('date'))
+                fl = animal_first_last.get(a, {})
+                is_first = (dt == fl.get('First')) and ('All' in selected_dates or 'First' in selected_dates)
+                is_last  = (dt == fl.get('Last'))  and ('All' in selected_dates or 'Last'  in selected_dates)
+                return is_first or is_last
+
+            behaviors = sorted(list({res.get('behavior') for res in self.analysis_results
+                                     if matches_first_last(res) and res.get('behavior')}))
+            self.vis_behavior_select.add_option('All')
+            for b in behaviors:
+                self.vis_behavior_select.add_option(str(b))
+            return
+
         def matches(res):
             a = str(res.get('animal_id'))
             if mode == "Date":
@@ -1530,12 +1577,43 @@ class FiberPhotometryApp(QMainWindow):
         
         mode = self.vis_date_mode.currentText() if hasattr(self, 'vis_date_mode') else "Date"
 
+        # For First/Last mode, pre-compute per-animal first/last datetimes
+        if mode == "First/Last":
+            animal_datetime_map = {}
+            for res in self.analysis_results:
+                a = str(res.get('animal_id'))
+                if a not in selected_animals:
+                    continue
+                dt = res.get('datetime', res.get('date'))
+                if dt is None:
+                    continue
+                animal_datetime_map.setdefault(a, []).append(dt)
+            animal_first_last = {}
+            for a, dts in animal_datetime_map.items():
+                try:
+                    sorted_dts = sorted(set(dts))
+                except TypeError:
+                    sorted_dts = sorted(set(dts), key=str)
+                animal_first_last[a] = {
+                    'First': sorted_dts[0] if sorted_dts else None,
+                    'Last': sorted_dts[-1] if sorted_dts else None,
+                }
+
         grouped_raw_results = {}
         for res in self.analysis_results:
             a = str(res.get('animal_id'))
             b = str(res.get('behavior', ''))
-            
-            if mode == "Date":
+
+            if mode == "First/Last":
+                dt = res.get('datetime', res.get('date'))
+                fl = animal_first_last.get(a, {})
+                if 'First' in selected_dates and dt == fl.get('First'):
+                    d = 'First'
+                elif 'Last' in selected_dates and dt == fl.get('Last'):
+                    d = 'Last'
+                else:
+                    continue
+            elif mode == "Date":
                 d = str(res.get('date'))
             elif mode == "Date Time":
                 d = str(res.get('datetime', res.get('date')))
@@ -1545,7 +1623,7 @@ class FiberPhotometryApp(QMainWindow):
             # Filter against UI selections
             if a not in selected_animals:
                 continue
-            if d not in selected_dates:
+            if mode != "First/Last" and d not in selected_dates:
                 continue
             if b not in selected_behaviors:
                 continue
