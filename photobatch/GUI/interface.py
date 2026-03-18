@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget, Q
 from PySide6.QtCore import Qt, QThread, Signal, QSize
 from PySide6.QtGui import QAction, QIcon, QFont, QCursor
 from functools import partial
+from photobatch.Processing import data_processor
 
 # type: ignore
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -18,7 +19,6 @@ from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as Navigatio
 from matplotlib.figure import Figure
 import numpy as np
 import matplotlib.pyplot as plt
-from Processing import data_processor
 from PySide6.QtWidgets import QDialog
 
 class MatplotlibCanvas(FigureCanvas):
