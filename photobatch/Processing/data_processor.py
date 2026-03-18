@@ -1108,6 +1108,8 @@ class PhotometryData:
 def abet_extract_information(abet_file_path):
     animal_id = ''
     date = ''
+    time = ''
+    datetime_str = ''
     schedule = ''
     abet_file_path = abet_file_path
     event_time_colname = ['Evnt_Time', 'Event_Time']
@@ -1119,12 +1121,16 @@ def abet_extract_information(abet_file_path):
             if row[0] == 'Animal ID':
                 animal_id = str(row[1])
             elif row[0] == 'Date/Time':
-                date = str(row[1]).replace(':', '-').replace('/', '-')
+                datetime_str = str(row[1])
+                dt_clean = datetime_str.replace(':', '-').replace('/', '-')
+                parts = dt_clean.split(' ')
+                date = parts[0] if len(parts) > 0 else dt_clean
+                time = parts[1] if len(parts) > 1 else ''
             elif (row[0] == 'Schedule') or (row[0] == 'Schedule Name'):
                 schedule = str(row[1])
             elif row[0] in event_time_colname:
                 break
-    return animal_id, date, schedule
+    return animal_id, date, time, datetime_str, schedule
 
 def _process_single_file(args):
     """Module-level worker for ProcessPoolExecutor. Processes one ABET/Doric file pair
@@ -1165,9 +1171,9 @@ def _process_single_file(args):
     photometry_data.abet_trial_definition(trial_start_stage, trial_end_stage)
 
     try:
-        animal_id, date, _ = abet_extract_information(row['abet_path'])
-    except (FileNotFoundError, OSError, IndexError):
-        animal_id, date = None, None
+        animal_id, date, time, datetime_str, _ = abet_extract_information(row['abet_path'])
+    except (FileNotFoundError, OSError, IndexError, ValueError):
+        animal_id, date, time, datetime_str = None, None, None, None
 
     event_sheet_df = pd.read_csv(event_sheet_path)
 
@@ -1213,7 +1219,9 @@ def _process_single_file(args):
             "auc": auc,
             "plot_data": plot_df_copy,
             "animal_id": animal_id,
-            "date": date
+            "date": date,
+            "time": time,
+            "datetime": datetime_str
         })
 
     return file_results
@@ -1324,129 +1332,36 @@ def process_files(file_sheet_path, event_sheet_path, output_options, config, num
                 print(f"Processing error: {e}")
 
     # ------------------------------------------------------------------
-    # Aggregate per-behavior combined results
+    # Pre-process sessions and dates based on original datetime
     # ------------------------------------------------------------------
-    # We will compute three types of combined results:
-    # 1. Combined across ALL animals (existing behavior) -> key: 'behavior'
-    # 2. Combined across ALL animals FOR each date -> key: 'behavior (Date: YYYY-MM-DD)'
-    # 3. Longitudinal (difference between sorted dates for SAME animal) -> added natively to results
-    
-    combined_results = {}
-    date_combined = {} # Group by (behavior, date)
-    animal_date_map = {} # Group by (behavior, animal_id) -> list of results sorted by date
-    
+    import dateutil.parser
+    animal_sessions = {}
     for res in results:
-        behavior = res['behavior']
-        animal_id = res['animal_id']
-        date = res['date']
-        
-        # 1. Base combination (All Animals)
-        if behavior not in combined_results:
-            combined_results[behavior] = {
-                "file": "Combined",
-                "behavior": behavior,
-                "animal_id": None,
-                "date": None,
-                "auc_list": [],
-                "max_peak_list": [],
-                "plot_data_list": []
-            }
-        
-        combined_results[behavior]["auc_list"].append(res["auc"])
-        combined_results[behavior]["max_peak_list"].append(res["max_peak"])
-        if not res["plot_data"].empty:
-            mean_plot = res["plot_data"].mean(axis=1)
-            combined_results[behavior]["plot_data_list"].append(mean_plot)
+        aid = res.get('animal_id')
+        dt = res.get('datetime')
+        if aid and dt:
+            if aid not in animal_sessions:
+                animal_sessions[aid] = set()
+            animal_sessions[aid].add(dt)
             
-        # 2. Date grouping (Combined Animals by Date)
-        if date:
-            date_key = f"{behavior} (Date: {date})"
-            if date_key not in date_combined:
-                date_combined[date_key] = {
-                    "file": f"Combined {date}",
-                    "behavior": behavior,
-                    "animal_id": None,
-                    "date": date,
-                    "auc_list": [],
-                    "max_peak_list": [],
-                    "plot_data_list": []
-                }
-            date_combined[date_key]["auc_list"].append(res["auc"])
-            date_combined[date_key]["max_peak_list"].append(res["max_peak"])
-            if not res["plot_data"].empty:
-                date_combined[date_key]["plot_data_list"].append(mean_plot)
-                
-        # 3. Longitudinal preparation (Group by Animal and Behavior)
-        if animal_id and date:
-            anim_beh_key = (behavior, animal_id)
-            if anim_beh_key not in animal_date_map:
-                animal_date_map[anim_beh_key] = []
-            animal_date_map[anim_beh_key].append(res)
+    animal_session_map = {}
+    for aid, dt_set in animal_sessions.items():
+        try:
+            sorted_dts = sorted(list(dt_set), key=lambda x: dateutil.parser.parse(x) if x else pd.Timestamp(0))
+        except Exception:
+            sorted_dts = sorted(list(dt_set)) # fallback to string sort
+        animal_session_map[aid] = {dt: f"Session {i+1}" for i, dt in enumerate(sorted_dts)}
+        
+    for res in results:
+        aid = res.get('animal_id')
+        dt = res.get('datetime')
+        if aid and dt and aid in animal_session_map and dt in animal_session_map[aid]:
+            res['session'] = animal_session_map[aid][dt]
+        else:
+            res['session'] = "Session 1"
 
-    # Process base combinations
-    for behavior, data in combined_results.items():
-        if data["auc_list"]:
-            data["auc"] = float(np.mean(data["auc_list"]))
-            data["max_peak"] = float(np.mean(data["max_peak_list"]))
-            if data["plot_data_list"]:
-                data["plot_data"] = pd.concat(data["plot_data_list"], axis=1)
-            else:
-                data["plot_data"] = pd.DataFrame()
-        else:
-            data["auc"] = 0
-            data["max_peak"] = 0
-            data["plot_data"] = pd.DataFrame()
-        del data["auc_list"], data["max_peak_list"], data["plot_data_list"]
-        results.append(data)
-        
-    # Process date combinations
-    for date_key, data in date_combined.items():
-        if data["auc_list"]:
-            data["auc"] = float(np.mean(data["auc_list"]))
-            data["max_peak"] = float(np.mean(data["max_peak_list"]))
-            if data["plot_data_list"]:
-                data["plot_data"] = pd.concat(data["plot_data_list"], axis=1)
-            else:
-                data["plot_data"] = pd.DataFrame()
-        else:
-            data["auc"] = 0
-            data["max_peak"] = 0
-            data["plot_data"] = pd.DataFrame()
-        del data["auc_list"], data["max_peak_list"], data["plot_data_list"]
-        results.append(data)
-        
-    # Process longitudinal changes (Day N - Day N-1)
-    for (behavior, animal_id), anim_results in animal_date_map.items():
-        if len(anim_results) > 1:
-            # Sort by date
-            anim_results.sort(key=lambda x: str(x['date']))
-            for i in range(1, len(anim_results)):
-                prev_res = anim_results[i-1]
-                curr_res = anim_results[i]
-                
-                diff_auc = curr_res['auc'] - prev_res['auc']
-                diff_peak = curr_res['max_peak'] - prev_res['max_peak']
-                
-                # Difference the plot data
-                diff_plot_data = pd.DataFrame()
-                if not curr_res['plot_data'].empty and not prev_res['plot_data'].empty:
-                    # try to subtract the mean traces
-                    curr_mean = curr_res['plot_data'].mean(axis=1)
-                    prev_mean = prev_res['plot_data'].mean(axis=1)
-                    diff_series = curr_mean - prev_mean
-                    diff_plot_data = pd.DataFrame({f"Diff {curr_res['date']} - {prev_res['date']}": diff_series})
-                    
-                diff_behavior_key = f"{behavior} (Δ {curr_res['date']} minus {prev_res['date']})"
-                
-                longitudinal_res = {
-                    "file": f"Diff {curr_res['file']} - {prev_res['file']}",
-                    "behavior": diff_behavior_key,
-                    "animal_id": animal_id,
-                    "date": f"{curr_res['date']} - {prev_res['date']}",
-                    "auc": diff_auc,
-                    "max_peak": diff_peak,
-                    "plot_data": diff_plot_data
-                }
-                results.append(longitudinal_res)
+    # We removed predefined combined lists because they cause redundancy in the UI. 
+    # The UI will dynamically generate any combinations and alignments required.
+    combined_results = {}
 
     return results, combined_results

@@ -991,6 +991,10 @@ class FiberPhotometryApp(QMainWindow):
         self.vis_date_select = MultiSelectComboBox()
         self.vis_date_select.list_widget.itemChanged.connect(self.update_vis_behavior_select)
         
+        self.vis_date_mode = QComboBox()
+        self.vis_date_mode.addItems(["Date", "Date Time", "Order"])
+        self.vis_date_mode.currentTextChanged.connect(self.update_vis_date_select)
+        
         self.vis_date_treatment = QComboBox()
         self.vis_date_treatment.addItems(["Combine", "Separate Lines", "Separate Subplots"])
         
@@ -1021,6 +1025,7 @@ class FiberPhotometryApp(QMainWindow):
         controls_layout.addRow("Select Animal ID:", animal_layout)
         
         date_layout = QHBoxLayout()
+        date_layout.addWidget(self.vis_date_mode, 1)
         date_layout.addWidget(self.vis_date_select, 2)
         date_layout.addWidget(self.vis_date_treatment, 1)
         controls_layout.addRow("Select Date:", date_layout)
@@ -1135,20 +1140,30 @@ class FiberPhotometryApp(QMainWindow):
         if not selected_animals or not self.analysis_results:
             return
         
+        mode = self.vis_date_mode.currentText() if hasattr(self, 'vis_date_mode') else "Date"
         dates = set()
         for res in self.analysis_results:
             a = res.get('animal_id')
-            if a is None: a = 'Combined'
-            if 'All' in selected_animals or a in selected_animals:
-                d = res.get('date')
-                if d is None: d = 'All'
-                dates.add(d)
+            if a is None: continue
+            if 'All' in selected_animals or str(a) in selected_animals:
+                if mode == "Date":
+                    d = res.get('date')
+                elif mode == "Date Time":
+                    d = res.get('datetime', res.get('date'))
+                else:
+                    d = res.get('session', res.get('date'))
+                if d is not None:
+                    dates.add(d)
 
         # allow viewing all dates for the animal by adding options
         self.vis_date_select.add_option('All')
-        for d in sorted(dates):
-            if d != 'All':
-                self.vis_date_select.add_option(str(d))
+        try:
+            sorted_dates = sorted(dates)
+        except TypeError:
+            sorted_dates = sorted(dates, key=str)
+            
+        for d in sorted_dates:
+            self.vis_date_select.add_option(str(d))
         self.update_vis_behavior_select()
 
     def update_results_date_select(self, animal: str):
@@ -1236,6 +1251,7 @@ class FiberPhotometryApp(QMainWindow):
             columns.append('Animal')
         if include_date:
             columns.append('Date')
+            columns.append('Time')
         columns.extend(['Behavior', 'Max Peak', 'AUC'])
 
         self.results_table.setRowCount(len(filtered_results))
@@ -1249,6 +1265,8 @@ class FiberPhotometryApp(QMainWindow):
                 col_idx += 1
             if include_date:
                 self.results_table.setItem(i, col_idx, QTableWidgetItem(str(res.get('date', 'All'))))
+                col_idx += 1
+                self.results_table.setItem(i, col_idx, QTableWidgetItem(str(res.get('time', ''))))
                 col_idx += 1
                 
             self.results_table.setItem(i, col_idx, QTableWidgetItem(str(res.get('behavior', ''))))
@@ -1273,14 +1291,20 @@ class FiberPhotometryApp(QMainWindow):
         if not selected_animals or not selected_dates or not self.analysis_results:
             return
 
+        mode = self.vis_date_mode.currentText() if hasattr(self, 'vis_date_mode') else "Date"
+
         def matches(res):
-            a = res.get('animal_id')
-            if a is None: a = 'Combined'
-            d = res.get('date')
-            if d is None: d = 'All'
+            a = str(res.get('animal_id'))
+            if mode == "Date":
+                d = str(res.get('date'))
+            elif mode == "Date Time":
+                d = str(res.get('datetime', res.get('date')))
+            else:
+                d = str(res.get('session', res.get('date')))
+                
             if 'All' not in selected_animals and a not in selected_animals:
                 return False
-            if 'All' not in selected_dates and str(d) not in selected_dates:
+            if 'All' not in selected_dates and d not in selected_dates:
                 return False
             return True
 
@@ -1298,6 +1322,22 @@ class FiberPhotometryApp(QMainWindow):
         if not selected_behaviors:
             QMessageBox.warning(self, "Selection Error", "Please select at least one behavior to plot.")
             return
+            
+        # Expand 'All' selections to represent all unique values
+        if 'All' in selected_animals:
+            selected_animals = [str(self.vis_animal_select.list_widget.item(i).text()) 
+                                for i in range(self.vis_animal_select.list_widget.count()) 
+                                if str(self.vis_animal_select.list_widget.item(i).text()) not in ['All', 'Combined']]
+                                
+        if 'All' in selected_dates:
+            selected_dates = [str(self.vis_date_select.list_widget.item(i).text()) 
+                              for i in range(self.vis_date_select.list_widget.count()) 
+                              if str(self.vis_date_select.list_widget.item(i).text()) not in ['All', 'Combined']]
+                              
+        if 'All' in selected_behaviors:
+            selected_behaviors = [str(self.vis_behavior_select.list_widget.item(i).text()) 
+                                  for i in range(self.vis_behavior_select.list_widget.count()) 
+                                  if str(self.vis_behavior_select.list_widget.item(i).text()) not in ['All', 'Combined']]
 
         try:
             event_prior = float(self.event_prior_input.text() or 5.0)
@@ -1315,36 +1355,62 @@ class FiberPhotometryApp(QMainWindow):
                 cmap = plt.get_cmap(color_scheme)
             except ValueError:
                 cmap = plt.get_cmap("tab10")
+                
+        animal_treatment = self.vis_animal_treatment.currentText()
+        date_treatment = self.vis_date_treatment.currentText()
+        behavior_treatment = self.vis_behavior_treatment.currentText()
+        
+        mode = self.vis_date_mode.currentText() if hasattr(self, 'vis_date_mode') else "Date"
+
+        grouped_raw_results = {}
+        for res in self.analysis_results:
+            a = str(res.get('animal_id'))
+            b = str(res.get('behavior', ''))
+            
+            if mode == "Date":
+                d = str(res.get('date'))
+            elif mode == "Date Time":
+                d = str(res.get('datetime', res.get('date')))
+            else:
+                d = str(res.get('session', res.get('date')))
+                
+            # Filter against UI selections
+            if a not in selected_animals:
+                continue
+            if d not in selected_dates:
+                continue
+            if b not in selected_behaviors:
+                continue
+                
+            if res.get('plot_data').empty:
+                continue
+                
+            # Apply combination treatments immediately internally
+            eff_a = 'Combined' if animal_treatment == "Combine" else a
+            eff_d = 'All' if date_treatment == "Combine" else d
+            eff_b = 'Combined' if behavior_treatment == "Combine" else b
+            
+            key = (eff_a, eff_d, eff_b)
+            if key not in grouped_raw_results:
+                grouped_raw_results[key] = []
+            grouped_raw_results[key].append(res['plot_data'])
 
         matched_results = []
-        for a in selected_animals:
-            for d in selected_dates:
-                for b in selected_behaviors:
-                    for res in self.analysis_results:
-                        res_a = res.get('animal_id')
-                        if res_a is None: res_a = 'Combined'
-                        res_d = res.get('date')
-                        if res_d is None: res_d = 'All'
-                        res_b = res.get('behavior', '')
-                        
-                        if a != 'All':
-                            if a == 'Combined' and res.get('animal_id') is not None: continue
-                            if a != 'Combined' and res_a != a: continue
-                        
-                        if d != 'All' and str(res_d) != d:
-                            continue
-                            
-                        if res_b != b:
-                            continue
-                            
-                        if not res.get('plot_data').empty:
-                            matched_results.append({
-                                'animal': a,
-                                'date': d,
-                                'behavior': b,
-                                'data': res['plot_data']
-                            })
-                        break # Only need first matching for this combination
+        for (eff_a, eff_d, eff_b), data_list in grouped_raw_results.items():
+            if len(data_list) == 1:
+                combined_plot_data = data_list[0]
+            else:
+                try:
+                    combined_plot_data = pd.concat(data_list, axis=1)
+                except Exception:
+                    combined_plot_data = data_list[0]
+            
+            matched_results.append({
+                'animal': eff_a,
+                'date': eff_d,
+                'behavior': eff_b,
+                'data': combined_plot_data
+            })
 
         if not matched_results:
             self.canvas.axes.clear()
