@@ -9,7 +9,7 @@ from scipy import signal
 from scipy.optimize import curve_fit
 from scipy.interpolate import interp1d
 import scipy.sparse as sparse
-from scipy.sparse.linalg import spsolve
+from scipy.sparse.linalg import cg, spilu, LinearOperator
 import numpy as np
 import pandas as pd
 import h5py
@@ -811,14 +811,17 @@ class PhotometryData:
             z = np.zeros(n)
             for i in range(max_iter):
                 W = sparse.diags(w, 0)
-                C = W + H
-                # Solve C z = W y
+                C = (W + H).tocsc()  # CSC required by spilu
+                # Build a sparse ILU preconditioner once per iteration
                 try:
-                    z = spsolve(C, w * y)
-                except (RuntimeError, ValueError):
-                    # fallback to dense solve if sparse solve fails
-                    C_dense = (W + H).toarray()
-                    z = np.linalg.solve(C_dense, w * y)
+                    ilu = spilu(C, fill_factor=2)
+                    M = LinearOperator(C.shape, ilu.solve)
+                except RuntimeError:
+                    M = None  # fall back to unpreconditioned CG
+                # Solve C z ≈ W y with Conjugate Gradient (stays fully sparse)
+                z, info = cg(C, w * y, x0=z, M=M, atol=1e-8)
+                if info != 0:
+                    print(f"arPLS CG solver did not converge at iteration {i} (info={info})")
 
                 d = y - z
                 # statistics of negative residuals
