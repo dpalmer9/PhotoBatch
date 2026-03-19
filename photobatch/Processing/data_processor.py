@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from scipy import signal
 from scipy.optimize import curve_fit
+from scipy.interpolate import interp1d
 import scipy.sparse as sparse
 from scipy.sparse.linalg import spsolve
 import numpy as np
@@ -477,9 +478,11 @@ class PhotometryData:
         self.extra_prior = extra_prior_time
 
     def abet_doric_synchronize(self):
-        """ abet_doric_synchronize - This function searches for TTL timestamps in the ABET II raw data and
-        relates it to TTL pulses detected in the photometer. The adjusted sync value is calculated and the 
-        doric photometry data time is adjusted to be in reference to the ABET II file."""
+        """ abet_doric_synchronize - Uses cross-correlation to find the optimal global lag between
+        Doric TTL pulses and ABET TTL timestamps, then pairs nearest neighbours within tolerance.
+        This approach is robust to dropped / missing TTL pulses on either side.
+        The paired times are fed into a linear regression whose affine transform is applied to
+        self.doric_pandas['Time'] so that all subsequent operations use ABET-referenced time."""
         if not self.abet_loaded:
             return None
         if not self.doric_loaded:
@@ -497,46 +500,80 @@ class PhotometryData:
 
         doric_ttl_times_all = doric_ttl_active['Time'].values.astype(float)
         # Filter doric_ttl_times to only keep the first TTL in each pulse (100ms tolerance)
-        tolerance = 0.1  # 100 ms
+        pulse_tol = 0.1  # 100 ms
         filtered_doric_ttl_times = []
         last_time = None
         for t in doric_ttl_times_all:
-            if last_time is None or (t - last_time) > tolerance:
+            if last_time is None or (t - last_time) > pulse_tol:
                 filtered_doric_ttl_times.append(t)
                 last_time = t
         doric_ttl_times = np.array(filtered_doric_ttl_times)
 
         abet_ttl_times = abet_ttl_active.iloc[:, 0].values.astype(float)
-        print(doric_ttl_times)
-        print(abet_ttl_times)
+        print(f"Doric TTL count: {len(doric_ttl_times)}, ABET TTL count: {len(abet_ttl_times)}")
 
-        # Find corresponding TTL pulses.  Assume Doric has more pulses.
-        paired_doric_times = []
-        paired_abet_times = []
-        doric_index = 0
-        for abet_time in abet_ttl_times:
-            while doric_index < len(doric_ttl_times) and doric_ttl_times[doric_index] < abet_time:
-                doric_index += 1
-                print([doric_ttl_times[doric_index], abet_time])
-            if doric_index < len(doric_ttl_times):
-                paired_doric_times.append(doric_ttl_times[doric_index])
-                paired_abet_times.append(abet_time)
-                doric_index += 1
-            else:
-                break
-
-        if not paired_doric_times:
-            print("No matching TTL pulses found. Synchronization failed.")
+        if len(doric_ttl_times) < 2 or len(abet_ttl_times) < 2:
+            print("Not enough TTL pulses for cross-correlation synchronization.")
             return
 
-        #  Use linear regression on the *paired* TTL pulses
-        # print(paired_doric_times)
-        # print(paired_abet_times)
+        # --- Step 1: Build binary event vectors on a shared time grid ---
+        all_times = np.concatenate([doric_ttl_times, abet_ttl_times])
+        t_min, t_max = all_times.min(), all_times.max()
+        # Grid resolution: 10% of the median inter-pulse interval (whichever stream is denser)
+        median_ipi = min(np.median(np.diff(doric_ttl_times)), np.median(np.diff(abet_ttl_times)))
+        grid_res = median_ipi * 0.1
+        grid = np.arange(t_min - median_ipi, t_max + median_ipi, grid_res)
+
+        def times_to_binary(times, grid):
+            vec = np.zeros(len(grid), dtype=float)
+            indices = np.searchsorted(grid, times, side='left')
+            indices = np.clip(indices, 0, len(grid) - 1)
+            vec[indices] = 1.0
+            return vec
+
+        doric_vec = times_to_binary(doric_ttl_times, grid)
+        abet_vec = times_to_binary(abet_ttl_times, grid)
+
+        # --- Step 2: Cross-correlate to find optimal global lag ---
+        correlation = signal.correlate(doric_vec, abet_vec, mode='full')
+        lags = np.arange(-(len(abet_vec) - 1), len(doric_vec))
+        best_lag_idx = np.argmax(correlation)
+        best_lag_samples = lags[best_lag_idx]
+        best_lag_seconds = best_lag_samples * grid_res
+        print(f"Cross-correlation optimal lag: {best_lag_seconds:.4f} seconds ({best_lag_samples} grid steps)")
+
+        # --- Step 3: Shift ABET times by estimated offset, pair nearest within tolerance ---
+        abet_shifted = abet_ttl_times + best_lag_seconds
+        pair_tolerance = median_ipi * 0.5  # half the median inter-pulse interval
+
+        paired_doric_times = []
+        paired_abet_times = []
+        used_doric = set()
+
+        for i, at in enumerate(abet_shifted):
+            # Find the closest Doric TTL to this shifted ABET time
+            diffs = np.abs(doric_ttl_times - at)
+            closest_idx = np.argmin(diffs)
+            if diffs[closest_idx] <= pair_tolerance and closest_idx not in used_doric:
+                paired_doric_times.append(doric_ttl_times[closest_idx])
+                paired_abet_times.append(abet_ttl_times[i])  # use original (un-shifted) ABET time
+                used_doric.add(closest_idx)
+
+        paired_doric_times = np.array(paired_doric_times)
+        paired_abet_times = np.array(paired_abet_times)
+
+        print(f"Paired {len(paired_doric_times)} of {len(doric_ttl_times)} Doric / {len(abet_ttl_times)} ABET TTL pulses")
+
+        if len(paired_doric_times) < 2:
+            print("Not enough paired TTL pulses for linear regression. Synchronization failed.")
+            return
+
+        # --- Step 4: Linear regression on paired times ---
         ttl_model = LinearRegression()
-        ttl_model.fit(np.array(paired_doric_times).reshape(-1, 1), paired_abet_times)
-        
+        ttl_model.fit(paired_doric_times.reshape(-1, 1), paired_abet_times)
+
         # Calculate sync diagnostics: Residual Time Error
-        predicted_abet = ttl_model.predict(np.array(paired_doric_times).reshape(-1, 1))
+        predicted_abet = ttl_model.predict(paired_doric_times.reshape(-1, 1))
         residual_error = np.abs(paired_abet_times - predicted_abet).mean()
         print(f"Synchronization Residual Error (Mean Abs): {residual_error:.4f} seconds")
         if residual_error > 0.1:
@@ -604,14 +641,24 @@ class PhotometryData:
             f0_data = self.despike_signal(f0_data, window=int(despike_window), threshold=float(despike_threshold))
             f_data = self.despike_signal(f_data, window=int(despike_window), threshold=float(despike_threshold))
 
-        # compute sample frequency (Hz)
-        if fs_method == 'median':
-            # Calculate time diff between consecutive points and take median to estimate sampling interval
-            time_diffs = np.diff(time_data)
-            self.sample_frequency = 1.0 / np.median(time_diffs)
-        else:
-            # Use first and last point to approximate - good for uniform sampling but can be skewed by outliers
-            self.sample_frequency = len(time_data) / (time_data[(len(time_data) - 1)] - time_data[0])
+        # --- Interpolation step: resample to a uniform time grid ---
+        # Equipment may have intermittent sample loss, producing non-uniform spacing.
+        # Filtering assumes uniform spacing, so we interpolate onto a regular grid
+        # derived from the median sample interval.
+        time_diffs = np.diff(time_data)
+        median_dt = np.median(time_diffs)
+        uniform_time = np.arange(time_data[0], time_data[-1], median_dt)
+
+        if len(uniform_time) >= 2:
+            f0_interp = interp1d(time_data, f0_data, kind='linear', fill_value='extrapolate')
+            f_interp = interp1d(time_data, f_data, kind='linear', fill_value='extrapolate')
+            f0_data = f0_interp(uniform_time)
+            f_data = f_interp(uniform_time)
+            time_data = uniform_time
+            print(f"Interpolated to uniform grid: {len(time_data)} samples, dt={median_dt:.6f}s")
+
+        # compute sample frequency (Hz) from the (now uniform) time grid
+        self.sample_frequency = 1.0 / median_dt
 
         # Default: no filtering applied if parameters are invalid
         filtered_f0 = f0_data.copy()
@@ -669,7 +716,7 @@ class PhotometryData:
 
     def doric_fit(self, fit_type, filtered_f0, filtered_f, time_data=None, robust_fit=True,
                   arpls_lambda=1e5, arpls_max_iter=50, arpls_tol=1e-6, arpls_eps=1e-8,
-                  arpls_weight_scale=2.0):
+                  arpls_weight_scale=2.0, huber_epsilon='auto'):
         """ doric_fit - This function fits the filtered photometry signals to compute delta-F/F. 
         The fit can be linear regression, exponential decay, or arPLS baseline fitting. 
         The fitted baseline is used to compute delta-F/F for the active channel.
@@ -679,6 +726,11 @@ class PhotometryData:
         filtered_f: np.array The filtered active channel data. 
         time_data: np.array The time data corresponding to the filtered signals. If None, it will be extracted from self.doric_pandas.
         robust_fit: bool Whether to use a robust fitting method (HuberRegressor) for linear fits.
+        huber_epsilon: str or float  Controls the epsilon parameter for HuberRegressor.
+            - 'auto' or 'mad': calculate epsilon from the Median Absolute Deviation of the
+              session's noise floor (residuals between isobestic and active channels).
+            - A numeric value (float): use the value directly as epsilon.
+            Default: 'auto'.
         """
         
         # Fit filtered signals, compute delta-F and populate self.doric_pd
@@ -694,8 +746,25 @@ class PhotometryData:
                 # Reshape 1D Arrays to 2D for Scikit-learn
                 f0_reshapped = filtered_f0.reshape(-1, 1)
 
-                # epsilon control threshold where loss switches from squared to absolute
-                epsilon_val = 1.35
+                # Determine epsilon for HuberRegressor
+                epsilon_str = str(huber_epsilon).strip().lower()
+                if epsilon_str in ('auto', 'mad'):
+                    # Calculate epsilon from the Median Absolute Deviation of the noise floor
+                    residuals = filtered_f - np.median(filtered_f)
+                    mad_val = np.median(np.abs(residuals - np.median(residuals)))
+                    # Scale MAD to approximate standard deviation: sigma ≈ 1.4826 * MAD
+                    epsilon_val = 1.4826 * mad_val
+                    # HuberRegressor requires epsilon > 1.0
+                    epsilon_val = max(1.01, epsilon_val)
+                    print(f"Huber epsilon (auto/MAD): {epsilon_val:.4f}")
+                else:
+                    try:
+                        epsilon_val = float(huber_epsilon)
+                        epsilon_val = max(1.01, epsilon_val)
+                    except (ValueError, TypeError):
+                        epsilon_val = 1.35  # fallback default
+                    print(f"Huber epsilon (user-specified): {epsilon_val:.4f}")
+
                 # Fit a HuberRegressor which is more robust to outlying values
                 huber = HuberRegressor(epsilon=epsilon_val)
                 huber.fit(f0_reshapped, filtered_f)
@@ -1223,7 +1292,7 @@ def _process_single_file(args):
      iti_prior_trial, center_z, center_method,
      filter_type, filter_name, filter_order, filter_cutoff,
      despike, despike_window, despike_threshold, cheby_ripple,
-     fit_type, robust_fit,
+     fit_type, robust_fit, huber_epsilon,
      arpls_lambda, arpls_max_iter, arpls_tol, arpls_eps, arpls_weight_scale,
      exclusion_list, crop_start, crop_end) = args
 
@@ -1253,6 +1322,7 @@ def _process_single_file(args):
     )
     photometry_data.doric_fit(fit_type, filtered_f0, filtered_f, time_data,
                               robust_fit=robust_fit,
+                              huber_epsilon=huber_epsilon,
                               arpls_lambda=arpls_lambda,
                               arpls_max_iter=arpls_max_iter,
                               arpls_tol=arpls_tol,
@@ -1410,6 +1480,8 @@ def process_files(file_sheet_path, event_sheet_path, output_options, config, num
     robust_fit_str = config['Photometry_Processing'].get('robust_fit', 'true')
     robust_fit = robust_fit_str.lower() in ('true', '1', 'yes')
 
+    huber_epsilon = config['Photometry_Processing'].get('huber_epsilon', 'auto')
+
     try:
         arpls_lambda = float(config['Photometry_Processing'].get('arpls_lambda', '1e5'))
     except ValueError:
@@ -1452,7 +1524,7 @@ def process_files(file_sheet_path, event_sheet_path, output_options, config, num
             iti_prior_trial, center_z, center_method,
             filter_type, filter_name, filter_order, filter_cutoff,
             despike, despike_window, despike_threshold, cheby_ripple,
-            fit_type, robust_fit,
+            fit_type, robust_fit, huber_epsilon,
             arpls_lambda, arpls_max_iter, arpls_tol, arpls_eps, arpls_weight_scale,
             exclusion_list, crop_start, crop_end
         )

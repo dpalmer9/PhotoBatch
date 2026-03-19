@@ -116,6 +116,12 @@ class PhotometryPreviewWindow(QDialog):
         self.robust_fit.setChecked(robust_str.lower() in ('true', '1'))
         controls_form.addRow(self._robust_fit_label, self.robust_fit)
         
+        # huber_epsilon: only shown when fit_type == linear AND robust_fit is checked
+        self._huber_epsilon_label = QLabel("Huber Epsilon:")
+        self.huber_epsilon = QLineEdit(self.config['Photometry_Processing'].get('huber_epsilon', 'auto'))
+        self.huber_epsilon.setToolTip("'auto' or 'mad' = calculate from MAD of noise floor; or enter a numeric value (must be > 1.0)")
+        controls_form.addRow(self._huber_epsilon_label, self.huber_epsilon)
+        
         # arPLS controls — only shown when fit_type == arpls
         self._arpls_lambda_label = QLabel("arPLS Lambda:")
         self.arpls_lambda = QLineEdit(self.config['Photometry_Processing'].get('arpls_lambda', '1e5'))
@@ -161,6 +167,7 @@ class PhotometryPreviewWindow(QDialog):
         self.filter_type.currentTextChanged.connect(self._update_preview_visibility)
         self.filter_name.currentTextChanged.connect(self._update_preview_visibility)
         self.despike.stateChanged.connect(self._update_preview_visibility)
+        self.robust_fit.stateChanged.connect(self._update_preview_visibility)
         self._update_preview_visibility()
         
         # Right side plots
@@ -202,6 +209,11 @@ class PhotometryPreviewWindow(QDialog):
 
         self._robust_fit_label.setVisible(is_linear)
         self.robust_fit.setVisible(is_linear)
+
+        # Huber epsilon: visible only when fit_type == linear AND robust_fit is checked
+        is_huber = is_linear and self.robust_fit.isChecked()
+        self._huber_epsilon_label.setVisible(is_huber)
+        self.huber_epsilon.setVisible(is_huber)
 
         self._cheby_ripple_label.setVisible(is_cheby)
         self.cheby_ripple.setVisible(is_cheby)
@@ -337,11 +349,13 @@ class PhotometryPreviewWindow(QDialog):
             except ValueError:
                 arpls_weight_scale_val = 2.0
             robust_fit_val = self.robust_fit.isChecked()
+            huber_epsilon_val = self.huber_epsilon.text().strip()
 
             # Fit
             photometry_data.doric_fit(
                 self.fit_type.currentText(), filtered_f0, filtered_f, time_data,
                 robust_fit=robust_fit_val,
+                huber_epsilon=huber_epsilon_val,
                 arpls_lambda=arpls_lambda_val,
                 arpls_max_iter=arpls_max_iter_val,
                 arpls_tol=arpls_tol_val,
@@ -2239,6 +2253,17 @@ class FiberPhotometryApp(QMainWindow):
                     group_layout.addRow(label, checkbox)
                     setattr(self, f"{widget_attr_base}_checkbox", checkbox)
                     robust_fit_widgets.append((label, checkbox))
+
+                # huber_epsilon: only visible when fit_type == linear (grouped with robust_fit)
+                elif key == 'huber_epsilon':
+                    huber_edit = QLineEdit(value)
+                    huber_edit.setToolTip("'auto' or 'mad' = calculate from MAD of noise floor; or enter a numeric value (must be > 1.0)")
+                    label = QLabel("Huber Epsilon:")
+                    group_layout.addRow(label, huber_edit)
+                    huber_edit.setVisible(False)
+                    label.setVisible(False)
+                    setattr(self, f"{widget_attr_base}_line_edit", huber_edit)
+                    robust_fit_widgets.append((label, huber_edit))
 
                 # ARPLS options: all collected for show/hide; booleans get checkboxes, others get line edits
                 elif key.startswith('arpls_'):
