@@ -1458,6 +1458,7 @@ class FiberPhotometryApp(QMainWindow):
         # Visualization mode selector
         self.vis_mode_select = QComboBox()
         self.vis_mode_select.addItems(["Histogram", "Heatmap"])
+        self.vis_mode_select.currentTextChanged.connect(self._sync_visualization_treatment_options)
         
         # Color Scheme selector
         self.vis_color_scheme = QComboBox()
@@ -1485,23 +1486,6 @@ class FiberPhotometryApp(QMainWindow):
         display_layout.addWidget(self.vis_color_scheme, 1)
         controls_layout.addRow("Display Options:", display_layout)
         
-        # Axis Limits
-        axes_layout = QHBoxLayout()
-        axes_layout.addWidget(QLabel("X Min:"))
-        self.vis_x_min = QLineEdit()
-        axes_layout.addWidget(self.vis_x_min)
-        axes_layout.addWidget(QLabel("X Max:"))
-        self.vis_x_max = QLineEdit()
-        axes_layout.addWidget(self.vis_x_max)
-        
-        axes_layout.addWidget(QLabel("Y Min:"))
-        self.vis_y_min = QLineEdit()
-        axes_layout.addWidget(self.vis_y_min)
-        axes_layout.addWidget(QLabel("Y Max:"))
-        self.vis_y_max = QLineEdit()
-        axes_layout.addWidget(self.vis_y_max)
-        controls_layout.addRow("Manual Axis Limits:", axes_layout)
-        
         generate_plot_button = QPushButton("Generate Plot")
         generate_plot_button.clicked.connect(self.generate_plot)
         
@@ -1527,6 +1511,28 @@ class FiberPhotometryApp(QMainWindow):
         
         layout.addLayout(save_layout)
         self.visualization_tab.setLayout(layout)
+
+        self._sync_visualization_treatment_options()
+
+    def _sync_visualization_treatment_options(self):
+        """Keep visualization treatment options compatible with the selected plot mode."""
+        if not hasattr(self, 'vis_mode_select'):
+            return
+
+        is_heatmap = self.vis_mode_select.currentText() == "Heatmap"
+        valid_options = ["Combine", "Separate Subplots"] if is_heatmap else ["Combine", "Separate Lines", "Separate Subplots"]
+
+        for combo_name in ['vis_animal_treatment', 'vis_date_treatment', 'vis_behavior_treatment']:
+            combo = getattr(self, combo_name, None)
+            if combo is None:
+                continue
+
+            current_value = combo.currentText()
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItems(valid_options)
+            combo.setCurrentText(current_value if current_value in valid_options else "Combine")
+            combo.blockSignals(False)
 
     def _result_index_with_animals(self):
         index_df = self._load_results_index().copy()
@@ -1856,6 +1862,15 @@ class FiberPhotometryApp(QMainWindow):
         animal_treatment = self.vis_animal_treatment.currentText()
         date_treatment = self.vis_date_treatment.currentText()
         behavior_treatment = self.vis_behavior_treatment.currentText()
+
+        if vis_mode == 'heatmap':
+            valid_treatments = {"Combine", "Separate Subplots"}
+            if animal_treatment not in valid_treatments:
+                animal_treatment = "Combine"
+            if date_treatment not in valid_treatments:
+                date_treatment = "Combine"
+            if behavior_treatment not in valid_treatments:
+                behavior_treatment = "Combine"
         
         mode = self.vis_date_mode.currentText() if hasattr(self, 'vis_date_mode') else "Date"
 
@@ -2034,29 +2049,6 @@ class FiberPhotometryApp(QMainWindow):
                 cax = divider.append_axes("right", size="5%", pad=0.05)
                 cbar = self.canvas.figure.colorbar(im, cax=cax)
                 cbar.set_label("Signal")
-                
-        # Apply Manual Axis Limits
-        for ax in plot_axes:
-            if hasattr(self, 'vis_y_min') and self.vis_y_min.text() and vis_mode != 'heatmap':
-                try:
-                    ax.set_ylim(bottom=float(self.vis_y_min.text()))
-                except ValueError:
-                    pass
-            if hasattr(self, 'vis_y_max') and self.vis_y_max.text() and vis_mode != 'heatmap':
-                try:
-                    ax.set_ylim(top=float(self.vis_y_max.text()))
-                except ValueError:
-                    pass
-            if hasattr(self, 'vis_x_min') and self.vis_x_min.text():
-                try:
-                    ax.set_xlim(left=float(self.vis_x_min.text()))
-                except ValueError:
-                    pass
-            if hasattr(self, 'vis_x_max') and self.vis_x_max.text():
-                try:
-                    ax.set_xlim(right=float(self.vis_x_max.text()))
-                except ValueError:
-                    pass
 
         self.canvas.figure.tight_layout()
         self.canvas.draw()
