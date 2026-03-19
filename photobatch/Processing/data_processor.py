@@ -17,6 +17,8 @@ from sklearn.linear_model import LinearRegression, HuberRegressor
 from scipy.ndimage import median_filter
 from pathlib import Path
 
+from photobatch.Processing import hdf_store
+
 
 # Classes
 class PhotometryData:
@@ -1419,8 +1421,7 @@ def _process_single_file(args):
 
 
 def process_files(file_sheet_path, event_sheet_path, output_options, config, num_workers=1):
-    """Process all file pairs defined in *file_sheet_path* and return
-    ``(results, combined_results)``.
+    """Process all file pairs defined in *file_sheet_path* and persist them to HDF5.
 
     Parameters
     ----------
@@ -1440,11 +1441,8 @@ def process_files(file_sheet_path, event_sheet_path, output_options, config, num
 
     Returns
     -------
-    tuple[list[dict], dict[str, dict]]
-        *results* – flat list of per-event result dicts (individual animals plus
-        combined sentinel entries with ``animal_id=None``).
-        *combined_results* – mapping from behavior name to its aggregated result
-        dict, ready for direct use in the visualization tab.
+    str
+        Absolute path to the HDF5 analysis store written for this run.
     """
     file_pair_df = pd.read_csv(file_sheet_path)
 
@@ -1534,7 +1532,48 @@ def process_files(file_sheet_path, event_sheet_path, output_options, config, num
         for _, row in file_pair_df.iterrows()
     ]
 
-    results = []
+    try:
+        import io
+        config_buffer = io.StringIO()
+        config.write(config_buffer)
+        config_text = config_buffer.getvalue()
+    except Exception:
+        config_text = ''
+
+    hdf5_path = hdf_store.initialize_results_file(
+        hdf_store.get_default_results_path(),
+        metadata={
+            'file_sheet_path': file_sheet_path,
+            'event_sheet_path': event_sheet_path,
+            'event_prior': event_window_prior,
+            'event_follow': event_window_follow,
+            'config_text': config_text,
+        },
+    )
+
+    index_records = []
+    result_counter = 0
+
+    def persist_result_batch(result_batch):
+        nonlocal result_counter
+
+        for result in result_batch:
+            result_counter += 1
+            result_id = f"result_{result_counter:06d}"
+            result['result_id'] = result_id
+            hdf_store.append_result(hdf5_path, result_id, result)
+            index_records.append({
+                'result_id': result_id,
+                'file': result.get('file'),
+                'behavior': result.get('behavior'),
+                'animal_id': result.get('animal_id'),
+                'date': result.get('date'),
+                'time': result.get('time'),
+                'datetime': result.get('datetime'),
+                'session': result.get('session', ''),
+                'max_peak': result.get('max_peak'),
+                'auc': result.get('auc'),
+            })
 
     if num_workers > 1:
         # Use a process pool for true multi-core parallelism.
@@ -1547,21 +1586,21 @@ def process_files(file_sheet_path, event_sheet_path, output_options, config, num
                            for i, args in enumerate(args_list)}
                 for future in as_completed(futures):
                     try:
-                        results.extend(future.result())
+                        persist_result_batch(future.result())
                     except Exception as e:
                         print(f"Worker error for file pair {futures[future]}: {e}")
         except Exception as e:
             print(f"ProcessPoolExecutor failed ({e}); falling back to sequential processing.")
             for args in args_list:
                 try:
-                    results.extend(_process_single_file(args))
+                    persist_result_batch(_process_single_file(args))
                 except Exception as ex:
                     print(f"Sequential fallback error: {ex}")
     else:
         # Sequential path – used when num_workers == 1 or as the fallback.
         for args in args_list:
             try:
-                results.extend(_process_single_file(args))
+                persist_result_batch(_process_single_file(args))
             except Exception as e:
                 print(f"Processing error: {e}")
 
@@ -1570,9 +1609,9 @@ def process_files(file_sheet_path, event_sheet_path, output_options, config, num
     # ------------------------------------------------------------------
     import dateutil.parser
     animal_sessions = {}
-    for res in results:
-        aid = res.get('animal_id')
-        dt = res.get('datetime')
+    for record in index_records:
+        aid = record.get('animal_id')
+        dt = record.get('datetime')
         if aid and dt:
             if aid not in animal_sessions:
                 animal_sessions[aid] = set()
@@ -1586,16 +1625,18 @@ def process_files(file_sheet_path, event_sheet_path, output_options, config, num
             sorted_dts = sorted(list(dt_set)) # fallback to string sort
         animal_session_map[aid] = {dt: f"Session {i+1}" for i, dt in enumerate(sorted_dts)}
         
-    for res in results:
-        aid = res.get('animal_id')
-        dt = res.get('datetime')
+    session_updates = {}
+    for record in index_records:
+        aid = record.get('animal_id')
+        dt = record.get('datetime')
         if aid and dt and aid in animal_session_map and dt in animal_session_map[aid]:
-            res['session'] = animal_session_map[aid][dt]
+            session_name = animal_session_map[aid][dt]
         else:
-            res['session'] = "Session 1"
+            session_name = "Session 1"
+        record['session'] = session_name
+        session_updates[str(record['result_id'])] = session_name
 
-    # We removed predefined combined lists because they cause redundancy in the UI. 
-    # The UI will dynamically generate any combinations and alignments required.
-    combined_results = {}
+    hdf_store.update_result_sessions(hdf5_path, session_updates)
+    hdf_store.write_index(hdf5_path, index_records)
 
-    return results, combined_results
+    return hdf5_path

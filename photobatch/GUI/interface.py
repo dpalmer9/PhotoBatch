@@ -1,6 +1,8 @@
 import sys
 import pandas as pd
 import os
+import pickle
+import shutil
 import configparser
 from PySide6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout,
                                QPushButton, QLabel, QFileDialog, QLineEdit, QTableWidget,
@@ -11,11 +13,11 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget, Q
 from PySide6.QtCore import Qt, QThread, Signal, QSize
 from PySide6.QtGui import QAction, QIcon, QFont, QCursor
 from functools import partial
-from photobatch.Processing import data_processor
+from photobatch.Processing import data_processor, hdf_store
 
 # type: ignore
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qt import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
 import numpy as np
 import matplotlib.pyplot as plt
@@ -27,6 +29,21 @@ class MatplotlibCanvas(FigureCanvas):
         self.axes = fig.add_subplot(111)
         fig.tight_layout()
         super(MatplotlibCanvas, self).__init__(fig)
+
+
+class PlotViewerWindow(QDialog):
+    def __init__(self, source_figure, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Plot Viewer")
+        self.resize(1600, 900)
+
+        layout = QVBoxLayout(self)
+        cloned_figure = pickle.loads(pickle.dumps(source_figure))
+        self.canvas = FigureCanvas(cloned_figure)
+        self.toolbar = NavigationToolbar(self.canvas, self)
+        layout.addWidget(self.toolbar)
+        layout.addWidget(self.canvas)
+        self.showMaximized()
 
 class PhotometryPreviewWindow(QDialog):
     def __init__(self, config, file_pair_data, parent=None):
@@ -450,7 +467,7 @@ class AnalysisThread(QThread):
     """Background thread that runs process_files so the GUI stays responsive
     during potentially long multi-file analyses.
     """
-    results_ready = Signal(list, dict)   # (results, combined_results)
+    results_ready = Signal(str)
     error_occurred = Signal(str)
 
     def __init__(self, file_pair_path, event_sheet_path, output_selections,
@@ -464,14 +481,14 @@ class AnalysisThread(QThread):
 
     def run(self):
         try:
-            results, combined_results = data_processor.process_files(
+            hdf5_path = data_processor.process_files(
                 self.file_pair_path,
                 self.event_sheet_path,
                 self.output_selections,
                 self.config,
                 self.num_workers
             )
-            self.results_ready.emit(results, combined_results)
+            self.results_ready.emit(hdf5_path)
         except Exception as e:
             self.error_occurred.emit(str(e))
 
@@ -485,9 +502,9 @@ class FiberPhotometryApp(QMainWindow):
         self.config_file_path = os.path.normpath(os.path.join(script_dir, '..', 'Config.ini'))
         self.config = configparser.ConfigParser()
 
-        self.analysis_results = []
-        self.combined_results = {}
+        self.results_hdf5_path = ''
         self.plot_data = pd.DataFrame()
+        self.plot_window = None
 
         try:
             if not self.config.read(self.config_file_path):
@@ -683,6 +700,69 @@ class FiberPhotometryApp(QMainWindow):
         save_config_as_action = QAction("Save Configuration As...", self)
         save_config_as_action.triggered.connect(self.save_configuration_as)
         file_menu.addAction(save_config_as_action)
+        file_menu.addSeparator()
+        open_analysis_action = QAction("Open Analysis Data...", self)
+        open_analysis_action.triggered.connect(self.open_analysis_data_file)
+        file_menu.addAction(open_analysis_action)
+        save_analysis_action = QAction("Save Analysis Data As...", self)
+        save_analysis_action.triggered.connect(self.save_analysis_data_as)
+        file_menu.addAction(save_analysis_action)
+
+    def _has_results_store(self):
+        return bool(self.results_hdf5_path) and os.path.exists(self.results_hdf5_path)
+
+    def _load_results_index(self):
+        if not self._has_results_store():
+            return pd.DataFrame(columns=['result_id', 'file', 'behavior', 'animal_id', 'date', 'time', 'datetime', 'session', 'max_peak', 'auc'])
+        return hdf_store.load_results_index(self.results_hdf5_path)
+
+    def _apply_results_store_metadata(self):
+        if not self._has_results_store():
+            return
+
+        metadata = hdf_store.load_store_metadata(self.results_hdf5_path)
+        event_prior = metadata.get('event_prior')
+        event_follow = metadata.get('event_follow')
+
+        if hasattr(self, 'event_prior_input') and event_prior not in (None, ''):
+            self.event_prior_input.setText(str(event_prior))
+        if hasattr(self, 'event_follow_input') and event_follow not in (None, ''):
+            self.event_follow_input.setText(str(event_follow))
+
+    def set_results_store(self, hdf5_path, success_message=None):
+        self.results_hdf5_path = os.path.normpath(hdf5_path)
+        self.plot_data = pd.DataFrame()
+        self._apply_results_store_metadata()
+        self.update_results_and_visualization_options()
+        self.status_bar.showMessage(f"Analysis store ready: {self.results_hdf5_path}")
+        if success_message:
+            QMessageBox.information(self, "Analysis Data", success_message)
+
+    def open_analysis_data_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Open Analysis Data", "", "HDF5 Files (*.hdf5 *.h5)")
+        if not file_path:
+            return
+
+        try:
+            hdf_store.load_store_metadata(file_path)
+            self.set_results_store(file_path, f"Loaded analysis data from:\n{file_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Open Analysis Data", f"Failed to open analysis data file:\n{e}")
+
+    def save_analysis_data_as(self):
+        if not self._has_results_store():
+            QMessageBox.warning(self, "No Analysis Data", "Run an analysis or open an analysis data file first.")
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Analysis Data As", "", "HDF5 Files (*.hdf5 *.h5)")
+        if not file_path:
+            return
+
+        try:
+            shutil.copy2(self.results_hdf5_path, file_path)
+            QMessageBox.information(self, "Analysis Data", f"Analysis data saved to:\n{file_path}")
+        except OSError as e:
+            QMessageBox.critical(self, "Save Analysis Data", f"Failed to save analysis data:\n{e}")
 
     def apply_template_behaviour(self, file_path):
         """Parse the template behaviour file and update the UI with its contents."""
@@ -1270,16 +1350,13 @@ class FiberPhotometryApp(QMainWindow):
         self.status_bar.showMessage("Running Analysis...")
         self._analysis_thread.start()
 
-    def _on_analysis_complete(self, results, combined_results):
+    def _on_analysis_complete(self, hdf5_path):
         """Called on the main thread when the analysis worker finishes."""
-        self.analysis_results = results
-        self.combined_results = combined_results
         self.run_analysis_button.setEnabled(True)
         self.run_analysis_button.setText("Run Analysis")
         self.progress_bar.hide()
         self.status_bar.showMessage("Analysis Complete")
-        self.update_results_and_visualization_options()
-        QMessageBox.information(self, "Analysis", "Analysis complete!")
+        self.set_results_store(hdf5_path, f"Analysis complete. Results were written to:\n{hdf5_path}")
 
     def _on_analysis_error(self, error_msg):
         """Called on the main thread when the analysis worker raises an exception."""
@@ -1330,9 +1407,15 @@ class FiberPhotometryApp(QMainWindow):
             rows = self.results_table.rowCount()
             cols = self.results_table.columnCount()
             data = []
-            headers = [self.results_table.horizontalHeaderItem(col).text() for col in range(cols)]
+            headers = []
+            for col in range(cols):
+                header_item = self.results_table.horizontalHeaderItem(col)
+                headers.append(header_item.text() if header_item else f"Column {col + 1}")
             for row in range(rows):
-                row_data = [self.results_table.item(row, col).text() for col in range(cols)]
+                row_data = []
+                for col in range(cols):
+                    item = self.results_table.item(row, col)
+                    row_data.append(item.text() if item else '')
                 data.append(row_data)
             df = pd.DataFrame(data, columns=headers)
             df.to_csv(file_path, index=False)
@@ -1436,30 +1519,64 @@ class FiberPhotometryApp(QMainWindow):
         save_data_button.clicked.connect(self.save_plot_data)
         save_graph_button = QPushButton("Save Graph")
         save_graph_button.clicked.connect(self.save_plot_graph)
+        full_screen_button = QPushButton("Open Full Screen")
+        full_screen_button.clicked.connect(self.open_full_screen_plot)
         save_layout.addWidget(save_data_button)
         save_layout.addWidget(save_graph_button)
+        save_layout.addWidget(full_screen_button)
         
         layout.addLayout(save_layout)
         self.visualization_tab.setLayout(layout)
 
-    def update_animal_date_selects(self):
-        """Populate animal and date dropdowns for both Results and Visualization tabs based on analysis_results.
-        If a combined (no animal_id) result exists, include the 'Combined' option for animals.
-        """
-        # Build animals and dates mapping
-        animals = set()
-        dates_by_animal = {}
-        combined_exists = False
-        for res in (self.analysis_results or []):
-            a = res.get('animal_id')
-            d = res.get('date')
-            if not a:
-                combined_exists = True
-                continue
-            animals.add(a)
-            dates_by_animal.setdefault(a, set()).add(d)
+    def _result_index_with_animals(self):
+        index_df = self._load_results_index().copy()
+        if index_df.empty:
+            return index_df
 
-        animals = sorted(animals)
+        for column in ['result_id', 'file', 'behavior', 'animal_id', 'date', 'time', 'datetime', 'session']:
+            if column in index_df:
+                index_df[column] = index_df[column].fillna('').astype(str)
+
+        return index_df[index_df['animal_id'].str.len() > 0].copy()
+
+    def _sort_selector_values(self, values, mode='Date'):
+        unique_values = {str(value) for value in values if str(value)}
+        if mode == 'Order':
+            def sort_key(value):
+                try:
+                    return (0, int(str(value).split()[-1]), str(value))
+                except (ValueError, IndexError):
+                    return (1, str(value), str(value))
+        else:
+            def sort_key(value):
+                parsed = pd.to_datetime(str(value), errors='coerce')
+                if pd.isna(parsed):
+                    return (1, str(value), str(value))
+                return (0, parsed.value, str(value))
+
+        return [item for item in sorted(unique_values, key=sort_key)]
+
+    def _build_first_last_map(self, index_df):
+        first_last_map = {}
+        if index_df.empty:
+            return first_last_map
+
+        working_df = index_df.copy()
+        working_df['first_last_key'] = working_df['datetime'].where(working_df['datetime'].str.len() > 0, working_df['date'])
+
+        for animal_id, animal_df in working_df.groupby('animal_id'):
+            ordered_labels = self._sort_selector_values(animal_df['first_last_key'].tolist(), mode='Date Time')
+            first_last_map[str(animal_id)] = {
+                'First': ordered_labels[0] if ordered_labels else None,
+                'Last': ordered_labels[-1] if ordered_labels else None,
+            }
+
+        return first_last_map
+
+    def update_animal_date_selects(self):
+        """Populate animal and date selectors from the persisted HDF5 result index."""
+        index_df = self._result_index_with_animals()
+        animals = self._sort_selector_values(index_df['animal_id'].tolist()) if not index_df.empty else []
 
         # Update Results selectors if present
         if hasattr(self, 'results_animal_select') and hasattr(self, 'results_date_select'):
@@ -1484,9 +1601,6 @@ class FiberPhotometryApp(QMainWindow):
         if hasattr(self, 'vis_animal_select') and hasattr(self, 'vis_date_select'):
             self.vis_animal_select.list_widget.clear()
             self.vis_animal_select.add_option('All')
-            
-            if combined_exists:
-                self.vis_animal_select.add_option('Combined')
             for a in animals:
                 self.vis_animal_select.add_option(str(a))
                 
@@ -1497,7 +1611,8 @@ class FiberPhotometryApp(QMainWindow):
         """Populate the visualization date select when the animal selection changes."""
         self.vis_date_select.list_widget.clear()
         selected_animals = self.vis_animal_select.get_checked_items() if hasattr(self, 'vis_animal_select') else []
-        if not selected_animals or not self.analysis_results:
+        index_df = self._result_index_with_animals()
+        if not selected_animals or index_df.empty:
             return
         
         mode = self.vis_date_mode.currentText() if hasattr(self, 'vis_date_mode') else "Date"
@@ -1509,26 +1624,19 @@ class FiberPhotometryApp(QMainWindow):
             self.update_vis_behavior_select()
             return
 
-        dates = set()
-        for res in self.analysis_results:
-            a = res.get('animal_id')
-            if a is None: continue
-            if 'All' in selected_animals or str(a) in selected_animals:
-                if mode == "Date":
-                    d = res.get('date')
-                elif mode == "Date Time":
-                    d = res.get('datetime', res.get('date'))
-                else:
-                    d = res.get('session', res.get('date'))
-                if d is not None:
-                    dates.add(d)
+        if 'All' not in selected_animals:
+            index_df = index_df[index_df['animal_id'].isin(selected_animals)]
+
+        if mode == "Date":
+            date_values = index_df['date'].tolist()
+        elif mode == "Date Time":
+            date_values = index_df['datetime'].where(index_df['datetime'].str.len() > 0, index_df['date']).tolist()
+        else:
+            date_values = index_df['session'].where(index_df['session'].str.len() > 0, index_df['date']).tolist()
 
         # allow viewing all dates for the animal by adding options
         self.vis_date_select.add_option('All')
-        try:
-            sorted_dates = sorted(dates)
-        except TypeError:
-            sorted_dates = sorted(dates, key=str)
+        sorted_dates = self._sort_selector_values(date_values, mode=mode)
             
         for d in sorted_dates:
             self.vis_date_select.add_option(str(d))
@@ -1537,13 +1645,15 @@ class FiberPhotometryApp(QMainWindow):
     def update_results_date_select(self, animal: str):
         """Populate the results date select when the results animal selection changes."""
         self.results_date_select.clear()
-        if not animal or not self.analysis_results:
+        index_df = self._result_index_with_animals()
+        if not animal or index_df.empty:
             return
         
         if animal in ['Combine', 'All']:
-            dates = sorted({res.get('date') for res in self.analysis_results if res.get('animal_id') and res.get('date')})
+            date_values = index_df['date'].tolist()
         else:
-            dates = sorted({res.get('date') for res in self.analysis_results if str(res.get('animal_id')) == animal and res.get('date')})
+            date_values = index_df.loc[index_df['animal_id'] == animal, 'date'].tolist()
+        dates = self._sort_selector_values(date_values)
             
         self.results_date_select.addItem('Combine')
         self.results_date_select.addItem('All')
@@ -1556,22 +1666,17 @@ class FiberPhotometryApp(QMainWindow):
         self.results_behavior_select.clear()
         selected_animal = self.results_animal_select.currentText() if hasattr(self, 'results_animal_select') else ''
         selected_date = self.results_date_select.currentText() if hasattr(self, 'results_date_select') else ''
+        index_df = self._result_index_with_animals()
         
-        if not selected_animal or not self.analysis_results:
+        if not selected_animal or index_df.empty:
             return
-        
-        def matches(res):
-            if not res.get('animal_id'): 
-                return False
-            a = str(res.get('animal_id'))
-            d = str(res.get('date'))
-            if selected_animal not in ['Combine', 'All'] and a != selected_animal:
-                return False
-            if selected_date and selected_date not in ['Combine', 'All'] and d != selected_date:
-                return False
-            return True
-            
-        behaviors = sorted(list({res.get('behavior') for res in self.analysis_results if matches(res) and res.get('behavior')}))
+
+        if selected_animal not in ['Combine', 'All']:
+            index_df = index_df[index_df['animal_id'] == selected_animal]
+        if selected_date and selected_date not in ['Combine', 'All']:
+            index_df = index_df[index_df['date'] == selected_date]
+
+        behaviors = self._sort_selector_values(index_df['behavior'].tolist())
         self.results_behavior_select.addItem('Combine')
         self.results_behavior_select.addItem('All')
         for b in behaviors:
@@ -1582,49 +1687,31 @@ class FiberPhotometryApp(QMainWindow):
         selected_animal = self.results_animal_select.currentText() if hasattr(self, 'results_animal_select') else ''
         selected_date = self.results_date_select.currentText() if hasattr(self, 'results_date_select') else ''
         selected_behavior = self.results_behavior_select.currentText() if hasattr(self, 'results_behavior_select') else ''
+        index_df = self._result_index_with_animals()
         
-        if not selected_animal or not self.analysis_results:
+        if not selected_animal or index_df.empty:
             self.results_table.clear()
             self.results_table.setRowCount(0)
             self.results_table.setColumnCount(0)
             return
 
-        # We only consider the individual results to do grouping here
-        valid_results = [res for res in self.analysis_results if res.get('animal_id')]
+        if selected_animal not in ['Combine', 'All']:
+            index_df = index_df[index_df['animal_id'] == selected_animal]
+        if selected_date and selected_date not in ['Combine', 'All']:
+            index_df = index_df[index_df['date'] == selected_date]
+        if selected_behavior and selected_behavior not in ['Combine', 'All']:
+            index_df = index_df[index_df['behavior'] == selected_behavior]
 
-        def matches_selection(res):
-            res_animal = str(res.get('animal_id', ''))
-            res_date = str(res.get('date', ''))
-            res_behavior = str(res.get('behavior', ''))
-            
-            if selected_animal not in ['Combine', 'All'] and res_animal != selected_animal:
-                return False
-            if selected_date and selected_date not in ['Combine', 'All'] and res_date != selected_date:
-                return False
-            if selected_behavior and selected_behavior not in ['Combine', 'All'] and res_behavior != selected_behavior:
-                return False
-            return True
+        working_df = index_df.copy()
+        working_df['grp_animal'] = 'Combine' if selected_animal == 'Combine' else working_df['animal_id']
+        working_df['grp_date'] = 'Combine' if selected_date == 'Combine' else working_df['date']
+        working_df['grp_time'] = 'Combine' if selected_date == 'Combine' else working_df['time']
+        working_df['grp_behavior'] = 'Combine' if selected_behavior == 'Combine' else working_df['behavior']
 
-        filtered_results = [res for res in valid_results if matches_selection(res)]
-
-        # Group and compute averages
-        grouped_results = {}
-        for res in filtered_results:
-            grp_animal = 'Combine' if selected_animal == 'Combine' else str(res.get('animal_id', ''))
-            grp_date = 'Combine' if selected_date == 'Combine' else str(res.get('date', ''))
-            grp_behavior = 'Combine' if selected_behavior == 'Combine' else str(res.get('behavior', ''))
-            grp_time = 'Combine' if selected_date == 'Combine' else str(res.get('time', ''))
-            
-            key = (grp_animal, grp_date, grp_time, grp_behavior)
-            if key not in grouped_results:
-                grouped_results[key] = {'max_peaks': [], 'aucs': []}
-                
-            if res.get('max_peak') is not None:
-                try: grouped_results[key]['max_peaks'].append(float(res['max_peak']))
-                except ValueError: pass
-            if res.get('auc') is not None:
-                try: grouped_results[key]['aucs'].append(float(res['auc']))
-                except ValueError: pass
+        grouped_results = working_df.groupby(
+            ['grp_animal', 'grp_date', 'grp_time', 'grp_behavior'],
+            dropna=False,
+        ).agg(max_peak=('max_peak', 'mean'), auc=('auc', 'mean')).reset_index()
 
         # Determine dynamic columns
         include_animal = (selected_animal != 'Combine')
@@ -1639,35 +1726,35 @@ class FiberPhotometryApp(QMainWindow):
         if include_behavior: columns.append('Behavior')
         columns.extend(['Max Peak', 'AUC'])
 
-        self.results_table.setRowCount(len(grouped_results))
+        self.results_table.setRowCount(len(grouped_results.index))
         self.results_table.setColumnCount(len(columns))
         self.results_table.setHorizontalHeaderLabels(columns)
         
-        for i, (key, vals) in enumerate(grouped_results.items()):
+        for row_number, (_, row) in enumerate(grouped_results.iterrows()):
             col_idx = 0
-            grp_animal, grp_date, grp_time, grp_behavior = key
+            grp_animal = str(row['grp_animal'])
+            grp_date = str(row['grp_date'])
+            grp_time = str(row['grp_time'])
+            grp_behavior = str(row['grp_behavior'])
             
             if include_animal:
-                self.results_table.setItem(i, col_idx, QTableWidgetItem(grp_animal))
+                self.results_table.setItem(row_number, col_idx, QTableWidgetItem(grp_animal))
                 col_idx += 1
             if include_date:
-                self.results_table.setItem(i, col_idx, QTableWidgetItem(grp_date))
+                self.results_table.setItem(row_number, col_idx, QTableWidgetItem(grp_date))
                 col_idx += 1
-                self.results_table.setItem(i, col_idx, QTableWidgetItem(grp_time))
+                self.results_table.setItem(row_number, col_idx, QTableWidgetItem(grp_time))
                 col_idx += 1
             if include_behavior:
-                self.results_table.setItem(i, col_idx, QTableWidgetItem(grp_behavior))
+                self.results_table.setItem(row_number, col_idx, QTableWidgetItem(grp_behavior))
                 col_idx += 1
 
-            max_peaks = vals['max_peaks']
-            aucs = vals['aucs']
+            avg_max_peak = row['max_peak']
+            avg_auc = row['auc']
             
-            avg_max_peak = sum(max_peaks) / len(max_peaks) if max_peaks else None
-            avg_auc = sum(aucs) / len(aucs) if aucs else None
-            
-            self.results_table.setItem(i, col_idx, QTableWidgetItem(f"{avg_max_peak:.4f}" if avg_max_peak is not None else 'N/A'))
+            self.results_table.setItem(row_number, col_idx, QTableWidgetItem(f"{avg_max_peak:.4f}" if pd.notna(avg_max_peak) else 'N/A'))
             col_idx += 1
-            self.results_table.setItem(i, col_idx, QTableWidgetItem(f"{avg_auc:.4f}" if avg_auc is not None else 'N/A'))
+            self.results_table.setItem(row_number, col_idx, QTableWidgetItem(f"{avg_auc:.4f}" if pd.notna(avg_auc) else 'N/A'))
             
         self.results_table.resizeColumnsToContents()
 
@@ -1679,67 +1766,41 @@ class FiberPhotometryApp(QMainWindow):
         self.vis_behavior_select.list_widget.clear()
         selected_animals = self.vis_animal_select.get_checked_items() if hasattr(self, 'vis_animal_select') else []
         selected_dates = self.vis_date_select.get_checked_items() if hasattr(self, 'vis_date_select') else []
+        index_df = self._result_index_with_animals()
         
-        if not selected_animals or not selected_dates or not self.analysis_results:
+        if not selected_animals or not selected_dates or index_df.empty:
             return
 
         mode = self.vis_date_mode.currentText() if hasattr(self, 'vis_date_mode') else "Date"
 
+        if 'All' not in selected_animals:
+            index_df = index_df[index_df['animal_id'].isin(selected_animals)]
+
         if mode == "First/Last":
-            # Build per-animal first/last datetime mapping
-            animal_datetime_map = {}
-            for res in self.analysis_results:
-                a = str(res.get('animal_id'))
-                if 'All' not in selected_animals and a not in selected_animals:
-                    continue
-                dt = res.get('datetime', res.get('date'))
-                if dt is None:
-                    continue
-                animal_datetime_map.setdefault(a, []).append(dt)
-            animal_first_last = {}
-            for a, dts in animal_datetime_map.items():
-                try:
-                    sorted_dts = sorted(set(dts))
-                except TypeError:
-                    sorted_dts = sorted(set(dts), key=str)
-                animal_first_last[a] = {
-                    'First': sorted_dts[0] if sorted_dts else None,
-                    'Last': sorted_dts[-1] if sorted_dts else None,
-                }
-
-            def matches_first_last(res):
-                a = str(res.get('animal_id'))
-                if 'All' not in selected_animals and a not in selected_animals:
-                    return False
-                dt = res.get('datetime', res.get('date'))
-                fl = animal_first_last.get(a, {})
-                is_first = (dt == fl.get('First')) and ('All' in selected_dates or 'First' in selected_dates)
-                is_last  = (dt == fl.get('Last'))  and ('All' in selected_dates or 'Last'  in selected_dates)
-                return is_first or is_last
-
-            behaviors = sorted(list({res.get('behavior') for res in self.analysis_results
-                                     if matches_first_last(res) and res.get('behavior')}))
+            first_last_map = self._build_first_last_map(index_df)
+            first_last_keys = index_df['datetime'].where(index_df['datetime'].str.len() > 0, index_df['date'])
+            mask = pd.Series(False, index=index_df.index)
+            if 'All' in selected_dates or 'First' in selected_dates:
+                mask = mask | (first_last_keys == index_df['animal_id'].map(lambda animal: first_last_map.get(str(animal), {}).get('First')))
+            if 'All' in selected_dates or 'Last' in selected_dates:
+                mask = mask | (first_last_keys == index_df['animal_id'].map(lambda animal: first_last_map.get(str(animal), {}).get('Last')))
+            behaviors = self._sort_selector_values(index_df.loc[mask, 'behavior'].tolist())
             self.vis_behavior_select.add_option('All')
             for b in behaviors:
                 self.vis_behavior_select.add_option(str(b))
             return
 
-        def matches(res):
-            a = str(res.get('animal_id'))
-            if mode == "Date":
-                d = str(res.get('date'))
-            elif mode == "Date Time":
-                d = str(res.get('datetime', res.get('date')))
-            else:
-                d = str(res.get('session', res.get('date')))
-                
-            if 'All' not in selected_animals and a not in selected_animals:
-                return False
-            if 'All' not in selected_dates and d not in selected_dates:
-                return False
-            return True
+        if mode == "Date":
+            date_values = index_df['date']
+        elif mode == "Date Time":
+            date_values = index_df['datetime'].where(index_df['datetime'].str.len() > 0, index_df['date'])
+        else:
+            date_values = index_df['session'].where(index_df['session'].str.len() > 0, index_df['date'])
 
-        behaviors = sorted(list({res.get('behavior') for res in self.analysis_results if matches(res) and res.get('behavior')}))
+        if 'All' not in selected_dates:
+            index_df = index_df[date_values.isin(selected_dates)]
+
+        behaviors = self._sort_selector_values(index_df['behavior'].tolist())
         self.vis_behavior_select.add_option('All')
         for b in behaviors:
             self.vis_behavior_select.add_option(str(b))
@@ -1770,6 +1831,11 @@ class FiberPhotometryApp(QMainWindow):
                                   for i in range(self.vis_behavior_select.list_widget.count()) 
                                   if str(self.vis_behavior_select.list_widget.item(i).text()) not in ['All', 'Combined']]
 
+        index_df = self._result_index_with_animals()
+        if index_df.empty:
+            QMessageBox.warning(self, "No Analysis Data", "Run an analysis or open an analysis data file first.")
+            return
+
         try:
             event_prior = float(self.event_prior_input.text() or 5.0)
             event_follow = float(self.event_follow_input.text() or 10.0)
@@ -1793,58 +1859,40 @@ class FiberPhotometryApp(QMainWindow):
         
         mode = self.vis_date_mode.currentText() if hasattr(self, 'vis_date_mode') else "Date"
 
-        # For First/Last mode, pre-compute per-animal first/last datetimes
+        working_df = index_df[index_df['animal_id'].isin(selected_animals)].copy()
+        working_df = working_df[working_df['behavior'].isin(selected_behaviors)]
+
         if mode == "First/Last":
-            animal_datetime_map = {}
-            for res in self.analysis_results:
-                a = str(res.get('animal_id'))
-                if a not in selected_animals:
-                    continue
-                dt = res.get('datetime', res.get('date'))
-                if dt is None:
-                    continue
-                animal_datetime_map.setdefault(a, []).append(dt)
-            animal_first_last = {}
-            for a, dts in animal_datetime_map.items():
-                try:
-                    sorted_dts = sorted(set(dts))
-                except TypeError:
-                    sorted_dts = sorted(set(dts), key=str)
-                animal_first_last[a] = {
-                    'First': sorted_dts[0] if sorted_dts else None,
-                    'Last': sorted_dts[-1] if sorted_dts else None,
-                }
+            first_last_map = self._build_first_last_map(working_df)
+            display_date = working_df['datetime'].where(working_df['datetime'].str.len() > 0, working_df['date'])
+            working_df['selected_date_value'] = ''
+            if 'First' in selected_dates:
+                first_mask = display_date == working_df['animal_id'].map(lambda animal: first_last_map.get(str(animal), {}).get('First'))
+                working_df.loc[first_mask, 'selected_date_value'] = 'First'
+            if 'Last' in selected_dates:
+                last_mask = display_date == working_df['animal_id'].map(lambda animal: first_last_map.get(str(animal), {}).get('Last'))
+                working_df.loc[last_mask, 'selected_date_value'] = 'Last'
+            working_df = working_df[working_df['selected_date_value'].str.len() > 0]
+        elif mode == "Date":
+            working_df['selected_date_value'] = working_df['date']
+            working_df = working_df[working_df['selected_date_value'].isin(selected_dates)]
+        elif mode == "Date Time":
+            working_df['selected_date_value'] = working_df['datetime'].where(working_df['datetime'].str.len() > 0, working_df['date'])
+            working_df = working_df[working_df['selected_date_value'].isin(selected_dates)]
+        else:
+            working_df['selected_date_value'] = working_df['session'].where(working_df['session'].str.len() > 0, working_df['date'])
+            working_df = working_df[working_df['selected_date_value'].isin(selected_dates)]
 
         grouped_raw_results = {}
-        for res in self.analysis_results:
-            a = str(res.get('animal_id'))
-            b = str(res.get('behavior', ''))
+        plot_data_map = hdf_store.load_plot_data_map(self.results_hdf5_path, working_df['result_id'].tolist())
 
-            if mode == "First/Last":
-                dt = res.get('datetime', res.get('date'))
-                fl = animal_first_last.get(a, {})
-                if 'First' in selected_dates and dt == fl.get('First'):
-                    d = 'First'
-                elif 'Last' in selected_dates and dt == fl.get('Last'):
-                    d = 'Last'
-                else:
-                    continue
-            elif mode == "Date":
-                d = str(res.get('date'))
-            elif mode == "Date Time":
-                d = str(res.get('datetime', res.get('date')))
-            else:
-                d = str(res.get('session', res.get('date')))
-                
-            # Filter against UI selections
-            if a not in selected_animals:
-                continue
-            if mode != "First/Last" and d not in selected_dates:
-                continue
-            if b not in selected_behaviors:
-                continue
-                
-            if res.get('plot_data').empty:
+        for _, res in working_df.iterrows():
+            a = str(res['animal_id'])
+            b = str(res['behavior'])
+            d = str(res['selected_date_value'])
+            plot_df = plot_data_map.get(str(res['result_id']), pd.DataFrame())
+
+            if plot_df.empty:
                 continue
                 
             # Apply combination treatments immediately internally
@@ -1855,7 +1903,7 @@ class FiberPhotometryApp(QMainWindow):
             key = (eff_a, eff_d, eff_b)
             if key not in grouped_raw_results:
                 grouped_raw_results[key] = []
-            grouped_raw_results[key].append(res['plot_data'])
+            grouped_raw_results[key].append(plot_df)
 
         matched_results = []
         for (eff_a, eff_d, eff_b), data_list in grouped_raw_results.items():
@@ -1893,7 +1941,6 @@ class FiberPhotometryApp(QMainWindow):
         # Determine number of subplots
         subplots_needed = 1
         subplot_groups = {} # group results by their subplot index
-        group_keys = []
         
         for res in matched_results:
             # Create a tuple representing which subplot this result belongs to
@@ -1905,7 +1952,6 @@ class FiberPhotometryApp(QMainWindow):
             sp_key = tuple(sp_key)
             if sp_key not in subplot_groups:
                 subplot_groups[sp_key] = []
-                group_keys.append(sp_key)
             subplot_groups[sp_key].append(res)
             
         subplots_needed = max(1, len(subplot_groups))
@@ -1915,9 +1961,11 @@ class FiberPhotometryApp(QMainWindow):
         if subplots_needed > 1:
             cols = 2 if subplots_needed % 2 == 0 or subplots_needed > 3 else 1
         rows = (subplots_needed + cols - 1) // cols
+        plot_axes = []
         
         for idx, (sp_key, Group) in enumerate(subplot_groups.items()):
             ax = self.canvas.figure.add_subplot(rows, cols, idx + 1)
+            plot_axes.append(ax)
             if idx == 0:
                 self.canvas.axes = ax # Set primary axes
                 
@@ -1962,7 +2010,7 @@ class FiberPhotometryApp(QMainWindow):
                 res = Group[0]
                 data = res['data'].T.values 
                 im = ax.imshow(data, aspect='auto', cmap=color_scheme.lower() if color_scheme != 'default' else 'viridis',
-                               extent=[-event_prior, event_follow, data.shape[0], 0])
+                               extent=(-event_prior, event_follow, data.shape[0], 0))
                 ax.axvline(x=0, color='r', linestyle='--')
                 ax.set_xlabel("Time (s)")
                 
@@ -1988,18 +2036,27 @@ class FiberPhotometryApp(QMainWindow):
                 cbar.set_label("Signal")
                 
         # Apply Manual Axis Limits
-        if hasattr(self, 'vis_y_min') and self.vis_y_min.text() and vis_mode != 'heatmap':
-            try: ax.set_ylim(bottom=float(self.vis_y_min.text()))
-            except ValueError: pass
-        if hasattr(self, 'vis_y_max') and self.vis_y_max.text() and vis_mode != 'heatmap':
-            try: ax.set_ylim(top=float(self.vis_y_max.text()))
-            except ValueError: pass
-        if hasattr(self, 'vis_x_min') and self.vis_x_min.text():
-            try: ax.set_xlim(left=float(self.vis_x_min.text()))
-            except ValueError: pass
-        if hasattr(self, 'vis_x_max') and self.vis_x_max.text():
-            try: ax.set_xlim(right=float(self.vis_x_max.text()))
-            except ValueError: pass
+        for ax in plot_axes:
+            if hasattr(self, 'vis_y_min') and self.vis_y_min.text() and vis_mode != 'heatmap':
+                try:
+                    ax.set_ylim(bottom=float(self.vis_y_min.text()))
+                except ValueError:
+                    pass
+            if hasattr(self, 'vis_y_max') and self.vis_y_max.text() and vis_mode != 'heatmap':
+                try:
+                    ax.set_ylim(top=float(self.vis_y_max.text()))
+                except ValueError:
+                    pass
+            if hasattr(self, 'vis_x_min') and self.vis_x_min.text():
+                try:
+                    ax.set_xlim(left=float(self.vis_x_min.text()))
+                except ValueError:
+                    pass
+            if hasattr(self, 'vis_x_max') and self.vis_x_max.text():
+                try:
+                    ax.set_xlim(right=float(self.vis_x_max.text()))
+                except ValueError:
+                    pass
 
         self.canvas.figure.tight_layout()
         self.canvas.draw()
@@ -2018,6 +2075,19 @@ class FiberPhotometryApp(QMainWindow):
         if file_path:
             self.canvas.figure.savefig(file_path)
             QMessageBox.information(self, "Saved", "Graph saved successfully.")
+
+    def open_full_screen_plot(self):
+        if not self.canvas.figure.axes:
+            QMessageBox.warning(self, "No Plot", "Generate a plot first.")
+            return
+
+        try:
+            self.plot_window = PlotViewerWindow(self.canvas.figure, self)
+            self.plot_window.show()
+            self.plot_window.raise_()
+            self.plot_window.activateWindow()
+        except Exception as e:
+            QMessageBox.critical(self, "Plot Viewer", f"Failed to open full-screen plot window:\n{e}")
 
     def init_options_tab(self):
         # Create a scrollable area for the Options tab
