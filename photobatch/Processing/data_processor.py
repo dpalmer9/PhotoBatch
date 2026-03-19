@@ -3,7 +3,7 @@ import os
 import sys
 import csv
 import configparser
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from scipy import signal
 from scipy.optimize import curve_fit
@@ -1534,13 +1534,12 @@ def process_files(file_sheet_path, event_sheet_path, output_options, config, num
     results = []
 
     if num_workers > 1:
-        # Use a thread pool for I/O and GIL-releasing numerical work.
-        # ThreadPoolExecutor runs in the same process as the GUI so no new
-        # windows are ever spawned.  numpy/scipy release the GIL during their
-        # C-extension calls, so multiple file pairs can execute their filtering,
-        # fitting, and trial-separation steps genuinely in parallel.
+        # Use a process pool for true multi-core parallelism.
+        # ProcessPoolExecutor runs each file pair in a separate OS process,
+        # bypassing the Python GIL and allowing CPU-bound tasks (filtering, fitting)
+        # to execute genuinely in parallel.
         try:
-            with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            with ProcessPoolExecutor(max_workers=num_workers) as executor:
                 futures = {executor.submit(_process_single_file, args): i
                            for i, args in enumerate(args_list)}
                 for future in as_completed(futures):
@@ -1549,7 +1548,7 @@ def process_files(file_sheet_path, event_sheet_path, output_options, config, num
                     except Exception as e:
                         print(f"Worker error for file pair {futures[future]}: {e}")
         except Exception as e:
-            print(f"ThreadPoolExecutor failed ({e}); falling back to sequential processing.")
+            print(f"ProcessPoolExecutor failed ({e}); falling back to sequential processing.")
             for args in args_list:
                 try:
                     results.extend(_process_single_file(args))
