@@ -1,6 +1,7 @@
 /Output
 /venv
 /.vs
+/.vscode
 *.pyc
 __pycache__/
 /bin
