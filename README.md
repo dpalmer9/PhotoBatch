@@ -86,6 +86,18 @@ create_raw: Creates an output with the entire time and delta-f values for the en
 ## Step 4: Run Script
 Once your files are configured, run the Photometry Analyzer BATCH.py script to process the data files. All desired outputs will be moved to the output path.
 
+## Persisted Analysis Data
+PhotoBatch now writes the analysis session to a project-level HDF5 file named `temp.hdf5` instead of keeping the full processed dataset in memory. The file contains:
+- A lightweight index of animals, dates, sessions, behaviours, and summary metrics.
+- Per-event peri-event data stored as individual HDF5 groups for on-demand loading in the Results and Visualization tabs.
+
+This makes it possible to:
+- Reopen a previous analysis run from the File menu with `Open Analysis Data...`.
+- Save a copy of the current analysis store with `Save Analysis Data As...`.
+- Regenerate results tables and plots directly from the HDF5 file without rerunning the pipeline.
+
+The Visualization tab also includes an `Open Full Screen` action so large multi-subplot figures can be inspected in a separate maximized window.
+
 #Notes
 ## Signal Processing
 Photometry data from the isobestic and active channels are passed through a 2nd order Low Pass Butterworth Filter to remove noise. Following this, least squares regression is used to fit the isobestic and active channel data. Finally, Delta-F is calculated for the entire event.

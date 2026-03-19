@@ -1,0 +1,9 @@
+/Output
+/venv
+/.vs
+/.vscode
+*.pyc
+__pycache__/
+/bin
+/dist
+/build
