@@ -31,14 +31,17 @@ def signal_filter(signal_pd, filter_type='lowpass', filter_name='butterworth',
         Rows with negative time are ignored.
     filter_type : str
         'lowpass' / 'low_pass' / 'low'  – IIR low-pass filter.
+        'highpass' / 'high_pass' / 'high' – IIR high-pass filter.
+        'bandpass' / 'band_pass' / 'band' – IIR band-pass filter.
         'smoothing' / 'smooth' / 'savgol' – Savitzky-Golay smoothing.
         Any other value leaves data unfiltered.
     filter_name : str
-        For low-pass filters: 'butterworth', 'bessel', or 'chebychev'.
+        For low-pass, high-pass, and band-pass filters: 'butterworth', 'bessel', or 'chebychev'.
     filter_order : int
         Filter order (IIR) or window length (Savitzky-Golay).
-    filter_cutoff : float
-        Cutoff frequency in Hz (low-pass only).
+    filter_cutoff : float, list, tuple, or np.ndarray
+        Cutoff frequency in Hz. Must be a scalar float for lowpass/highpass filters.
+        Must be a sequence (length 2) for bandpass filters.
     despike : bool
         Apply median/MAD despiking before filtering (default True).
     despike_window : int
@@ -96,24 +99,41 @@ def signal_filter(signal_pd, filter_type='lowpass', filter_name='butterworth',
 
     filter_type_lower = str(filter_type).lower()
 
-    if filter_type_lower in ('lowpass', 'low_pass', 'low'):
+    if filter_type_lower in ('lowpass', 'low_pass', 'low', 'highpass', 'high_pass', 'high', 'bandpass', 'band_pass', 'band'):
         filt_name = str(filter_name).lower()
         order  = int(filter_order) if filter_order is not None else 4
-        cutoff = float(filter_cutoff)
+        
+        if filter_type_lower in ('lowpass', 'low_pass', 'low'):
+            btype = 'lowpass'
+        elif filter_type_lower in ('highpass', 'high_pass', 'high'):
+            btype = 'highpass'
+        else:
+            btype = 'bandpass'
+
+        if btype in ('lowpass', 'highpass'):
+            if isinstance(filter_cutoff, (list, tuple, np.ndarray)):
+                raise TypeError(f"'{filter_type}' filter requires a scalar `filter_cutoff`, got sequence.")
+            cutoff = float(filter_cutoff)
+        else: # bandpass
+            if not isinstance(filter_cutoff, (list, tuple, np.ndarray)):
+                raise TypeError("bandpass filter requires `filter_cutoff` to be a list, tuple, or array.")
+            if len(filter_cutoff) != 2:
+                raise ValueError(f"bandpass filter requires exactly 2 cutoff frequencies, got {len(filter_cutoff)}.")
+            cutoff = [float(filter_cutoff[0]), float(filter_cutoff[1])]
 
         if filt_name in ('butterworth', 'butter'):
-            sos = signal.butter(N=order, Wn=cutoff, btype='lowpass',
+            sos = signal.butter(N=order, Wn=cutoff, btype=btype,
                                 analog=False, output='sos', fs=sample_frequency)
         elif filt_name in ('bessel', 'bess'):
-            sos = signal.bessel(N=order, Wn=cutoff, btype='lowpass',
+            sos = signal.bessel(N=order, Wn=cutoff, btype=btype,
                                 analog=False, output='sos', fs=sample_frequency)
         elif filt_name in ('chebychev', 'cheby', 'cheby1'):
             sos = signal.cheby1(N=order, rp=float(cheby_ripple), Wn=cutoff,
-                                btype='lowpass', analog=False, output='sos',
+                                btype=btype, analog=False, output='sos',
                                 fs=sample_frequency)
         else:
             # Unknown name – fall back to Butterworth
-            sos = signal.butter(N=order, Wn=cutoff, btype='lowpass',
+            sos = signal.butter(N=order, Wn=cutoff, btype=btype,
                                 analog=False, output='sos', fs=sample_frequency)
 
         filtered_f0 = signal.sosfiltfilt(sos, f0_data)
