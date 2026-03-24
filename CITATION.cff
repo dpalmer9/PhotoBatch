@@ -4,7 +4,7 @@ authors:
   - family-names: Palmer
     given-names: Daniel
     orcid: https://orcid.org/0000-0002-3419-8647
-title: "PhotoBatch: Batch Processing/Event Detection for ABET II Touchscreen Operant Behaviour and Doric Fiber Photometry"
-version: 1.0.0
+title: "PhotoBatch: Batch Processing/Event Detection for Neuroscientific Event/Behaviour Data and Signal Data"
+version: 2.0.0
 doi: 10.5281/zenodo.7577053
-date-released: 2022-01-24
+date-released: 2026-03-24

@@ -1,0 +1,10 @@
+{
+    "_description": "Signal utility configuration (despiking and cropping). Co-located with Processing/Signal/utilities.py.",
+    "Signal_Utilities": {
+        "despike": true,
+        "despike_window": 2001,
+        "despike_threshold": 5.0,
+        "crop_start": 0.0,
+        "crop_end": 0.0
+    }
+}

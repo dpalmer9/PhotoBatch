@@ -1,0 +1,10 @@
+{
+    "_description": "ABET II behaviour data source configuration. Co-located with IO/Behaviour/abet.py.",
+    "vendor_name": "ABET II",
+    "vendor_category": "Behaviour",
+    "ABET": {
+        "trial_start_stage": "",
+        "trial_end_stage": "",
+        "exclusion_list": ""
+    }
+}

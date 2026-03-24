@@ -2,7 +2,6 @@
 import os
 import io
 import csv
-import configparser
 import dateutil.parser
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
@@ -525,7 +524,7 @@ def process_files(file_sheet_path, event_sheet_path, output_options,
     file_sheet_path : str
     event_sheet_path : str
     output_options : list[int]
-    config : configparser.ConfigParser
+    config : ConfigManager
     num_workers : int
         >=2 enables ProcessPoolExecutor parallelism.
 
@@ -539,52 +538,39 @@ def process_files(file_sheet_path, event_sheet_path, output_options,
     event_window_follow = float(config['Event_Window']['event_follow'])
 
     trial_start_stage = [i.strip() for i in
-                         config['ITI_Window']['trial_start_stage'].split(',')]
+                         (config['ABET'].get('trial_start_stage') or '').split(',')
+                         if i.strip()]
     trial_end_stage   = [i.strip() for i in
-                         config['ITI_Window']['trial_end_stage'].split(',')]
+                         (config['ABET'].get('trial_end_stage') or '').split(',')
+                         if i.strip()]
 
-    iti_prior_trial = float(config['ITI_Window']['iti_prior_trial'])
-    center_z        = config['ITI_Window']['center_z']
-    center_method   = config['ITI_Window']['center_method']
+    iti_prior_trial = float(config['Normalization']['iti_prior_trial'])
+    center_z        = config['Normalization']['center_z']
+    center_method   = config['Normalization']['center_method']
 
-    filter_type   = config['Photometry_Processing']['filter_type']
-    filter_name   = config['Photometry_Processing']['filter_name']
-    filter_order  = int(config['Photometry_Processing']['filter_order'])
-    filter_cutoff = int(config['Photometry_Processing']['filter_cutoff'])
+    filter_type   = config['Signal_Filter']['filter_type']
+    filter_name   = config['Signal_Filter']['filter_name']
+    filter_order  = int(config['Signal_Filter']['filter_order'])
+    filter_cutoff = int(config['Signal_Filter']['filter_cutoff'])
 
-    def _get_bool(key, default='true'):
-        return config['Photometry_Processing'].get(key, default).lower() \
-               in ('true', '1', 'yes')
-
-    def _get_float(key, default):
-        try:
-            return float(config['Photometry_Processing'].get(key, str(default)))
-        except ValueError:
-            return default
-
-    def _get_int(key, default):
-        try:
-            return int(config['Photometry_Processing'].get(key, str(default)))
-        except ValueError:
-            return default
-
-    despike           = _get_bool('despike')
-    despike_window    = _get_int('despike_window', 2001)
-    despike_threshold = _get_float('despike_threshold', 5.0)
-    cheby_ripple      = _get_float('cheby_ripple', 1.0)
-    fit_type          = config['Photometry_Processing']['fit_type']
-    robust_fit        = _get_bool('robust_fit')
-    huber_epsilon     = config['Photometry_Processing'].get('huber_epsilon', 'auto')
-    arpls_lambda      = _get_float('arpls_lambda', 1e5)
-    arpls_max_iter    = _get_int('arpls_max_iter', 50)
-    arpls_tol         = _get_float('arpls_tol', 1e-6)
-    arpls_eps         = _get_float('arpls_eps', 1e-8)
-    arpls_weight_scale = _get_float('arpls_weight_scale', 2.0)
-    crop_start        = _get_float('crop_start', 0.0)
-    crop_end          = _get_float('crop_end', 0.0)
+    cheby_ripple      = float(config['Signal_Filter'].get('cheby_ripple', 1.0))
+    despike           = bool(config['Signal_Utilities'].get('despike', True))
+    despike_window    = int(config['Signal_Utilities'].get('despike_window', 2001))
+    despike_threshold = float(config['Signal_Utilities'].get('despike_threshold', 5.0))
+    crop_start        = float(config['Signal_Utilities'].get('crop_start', 0.0))
+    crop_end          = float(config['Signal_Utilities'].get('crop_end', 0.0))
+    fit_type          = config['Signal_Fitting']['fit_type']
+    robust_fit        = bool(config['Signal_Fitting'].get('robust_fit', True))
+    huber_epsilon     = config['Signal_Fitting'].get('huber_epsilon', 'auto')
+    arpls_lambda      = float(config['Signal_Fitting'].get('arpls_lambda', 1e5))
+    arpls_max_iter    = int(config['Signal_Fitting'].get('arpls_max_iter', 50))
+    arpls_tol         = float(config['Signal_Fitting'].get('arpls_tol', 1e-6))
+    arpls_eps         = float(config['Signal_Fitting'].get('arpls_eps', 1e-8))
+    arpls_weight_scale = float(config['Signal_Fitting'].get('arpls_weight_scale', 2.0))
 
     exclusion_list = [i.strip() for i in
-                      config['Filter']['exclusion_list'].split(',')]
+                      (config['ABET'].get('exclusion_list') or '').split(',')
+                      if i.strip()]
 
     args_list = [
         (
@@ -602,9 +588,7 @@ def process_files(file_sheet_path, event_sheet_path, output_options,
     ]
 
     try:
-        config_buffer = io.StringIO()
-        config.write(config_buffer)
-        config_text = config_buffer.getvalue()
+        config_text = config.to_json_string()
     except Exception:
         config_text = ''
 

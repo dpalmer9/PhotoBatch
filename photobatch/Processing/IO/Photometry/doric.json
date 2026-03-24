@@ -1,0 +1,6 @@
+{
+    "_description": "Doric photometry signal source configuration. Co-located with IO/Photometry/doric.py.",
+    "vendor_name": "Doric",
+    "vendor_category": "Photometry",
+    "Doric": {}
+}

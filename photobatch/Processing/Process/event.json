@@ -1,0 +1,12 @@
+{
+    "_description": "Event windowing and normalization settings for Process/event.py",
+    "Event_Window": {
+        "event_prior": 2.0,
+        "event_follow": 5.0
+    },
+    "Normalization": {
+        "iti_prior_trial": 1.0,
+        "center_z": "iti",
+        "center_method": "median"
+    }
+}

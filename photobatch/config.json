@@ -1,0 +1,25 @@
+{
+    "_description": "Main configuration for PhotoBatch. Controls file paths, output formats, concurrency, and vendor selection.",
+    "Filepath": {
+        "file_list_path": "C:/Users/MOUSETRAP-DAN/Documents/Alex_Project/Alex_File_Pair.csv",
+        "event_list_path": "C:/Users/MOUSETRAP-DAN/Documents/Alex_Project/Alex_Event.csv",
+        "output_path": "C:/Users/MOUSETRAP-DAN/Documents/Alex_Project",
+        "template_path": "C:/Users/MOUSETRAP-DAN/Documents/Alex_Project/7/Original Files/TCN_53DESKTOP-14QHEV2_AC C57 FPCPT 5013 G1_Mouse ICPT Stage 3 Var ITI v1 HORIZONTAL FP_160.csv"
+    },
+    "Output": {
+        "create_simplez": false,
+        "create_timedz": false,
+        "create_simplef": false,
+        "create_timedf": false,
+        "create_raw": false,
+        "create_summaryz": false,
+        "create_summaryf": false
+    },
+    "Concurrency": {
+        "num_workers": 6
+    },
+    "Vendors": {
+        "behaviour_vendor": "ABET II",
+        "signal_vendor": "Doric"
+    }
+}

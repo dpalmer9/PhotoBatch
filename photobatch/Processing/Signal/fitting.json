@@ -1,0 +1,16 @@
+{
+    "_description": "Signal baseline-fitting configuration. Co-located with Processing/Signal/fitting.py.",
+    "Signal_Fitting": {
+        "fit_type": "linear",
+        "robust_fit": true,
+        "huber_epsilon": "auto",
+        "fit_between_channels": true,
+        "fit_max_threshold": "",
+        "arpls_lambda": 100000.0,
+        "arpls_max_iter": 50,
+        "arpls_tol": 1e-06,
+        "arpls_eps": 1e-08,
+        "arpls_weight_scale": 2.0,
+        "arpls_downsample": true
+    }
+}

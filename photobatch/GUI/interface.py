@@ -3,7 +3,7 @@ import pandas as pd
 import os
 import pickle
 import shutil
-import configparser
+from photobatch.config_manager import ConfigManager
 from PySide6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout,
                                QPushButton, QLabel, QFileDialog, QLineEdit, QTableWidget,
                                QTableWidgetItem, QFormLayout, QMessageBox,
@@ -69,106 +69,97 @@ class PhotometryPreviewWindow(QDialog):
         
         self.filter_type = QComboBox()
         self.filter_type.addItems(['lowpass', 'smoothing'])
-        self.filter_type.setCurrentText(self.config['Photometry_Processing'].get('filter_type', 'lowpass'))
+        self.filter_type.setCurrentText(self.config['Signal_Filter'].get('filter_type', 'lowpass'))
         controls_form.addRow("Filter Type:", self.filter_type)
         
         self.filter_name = QComboBox()
         self.update_filter_name_options()
-        self.filter_name.setCurrentText(self.config['Photometry_Processing'].get('filter_name', 'butter'))
+        self.filter_name.setCurrentText(self.config['Signal_Filter'].get('filter_name', 'butter'))
         controls_form.addRow("Filter Name:", self.filter_name)
         
         self.filter_type.currentTextChanged.connect(self.update_filter_name_options)
         
         self.filter_order = QSpinBox()
         self.filter_order.setRange(1, 10)
-        self.filter_order.setValue(int(self.config['Photometry_Processing'].get('filter_order', '4')))
+        self.filter_order.setValue(int(self.config['Signal_Filter'].get('filter_order', 4)))
         controls_form.addRow("Filter/Savgol Order:", self.filter_order)
         
         self._fo_cutoff_label = QLabel("Cutoff/Savgol Window:")
         self.filter_cutoff = QSpinBox()
         self.filter_cutoff.setRange(1, 1000)
-        self.filter_cutoff.setValue(int(self.config['Photometry_Processing'].get('filter_cutoff', '10')))
+        self.filter_cutoff.setValue(int(self.config['Signal_Filter'].get('filter_cutoff', 10)))
         controls_form.addRow(self._fo_cutoff_label, self.filter_cutoff)
         
         # cheby_ripple: only shown when filter_type==lowpass AND filter_name==chebychev
         self._cheby_ripple_label = QLabel("Chebyshev Ripple (dB):")
-        self.cheby_ripple = QLineEdit(self.config['Photometry_Processing'].get('cheby_ripple', '1.0'))
+        self.cheby_ripple = QLineEdit(str(self.config['Signal_Filter'].get('cheby_ripple', 1.0)))
         controls_form.addRow(self._cheby_ripple_label, self.cheby_ripple)
         
-        self.crop_start = QLineEdit(self.config['Photometry_Processing'].get('crop_start', '0.0'))
+        self.crop_start = QLineEdit(str(self.config['Signal_Utilities'].get('crop_start', 0.0)))
         controls_form.addRow("Crop Start (s):", self.crop_start)
         
-        self.crop_end = QLineEdit(self.config['Photometry_Processing'].get('crop_end', '0.0'))
+        self.crop_end = QLineEdit(str(self.config['Signal_Utilities'].get('crop_end', 0.0)))
         controls_form.addRow("Crop End (s):", self.crop_end)
         
         # Despike group
         self.despike = QCheckBox()
-        despike_str = self.config['Photometry_Processing'].get('despike', 'true')
-        self.despike.setChecked(despike_str.lower() in ('true', '1'))
+        self.despike.setChecked(bool(self.config['Signal_Utilities'].get('despike', True)))
         controls_form.addRow("Despike:", self.despike)
         
         self._despike_window_label = QLabel("Despike Window:")
         self.despike_window = QSpinBox()
         self.despike_window.setRange(3, 100001)
         self.despike_window.setSingleStep(2)
-        try:
-            self.despike_window.setValue(int(self.config['Photometry_Processing'].get('despike_window', '2001')))
-        except ValueError:
-            self.despike_window.setValue(2001)
+        self.despike_window.setValue(int(self.config['Signal_Utilities'].get('despike_window', 2001)))
         controls_form.addRow(self._despike_window_label, self.despike_window)
         
         self._despike_threshold_label = QLabel("Despike Threshold:")
-        self.despike_threshold = QLineEdit(self.config['Photometry_Processing'].get('despike_threshold', '5.0'))
+        self.despike_threshold = QLineEdit(str(self.config['Signal_Utilities'].get('despike_threshold', 5.0)))
         controls_form.addRow(self._despike_threshold_label, self.despike_threshold)
         
         self.fit_type = QComboBox()
         self.fit_type.addItems(['linear', 'expodecay', 'arpls'])
-        self.fit_type.setCurrentText(self.config['Photometry_Processing'].get('fit_type', 'linear'))
+        self.fit_type.setCurrentText(self.config['Signal_Fitting'].get('fit_type', 'linear'))
         controls_form.addRow("Fit Type:", self.fit_type)
         
         # robust_fit: only shown when fit_type == linear
         self._robust_fit_label = QLabel("Robust Fit (Huber):")
         self.robust_fit = QCheckBox()
-        robust_str = self.config['Photometry_Processing'].get('robust_fit', 'true')
-        self.robust_fit.setChecked(robust_str.lower() in ('true', '1'))
+        self.robust_fit.setChecked(bool(self.config['Signal_Fitting'].get('robust_fit', True)))
         controls_form.addRow(self._robust_fit_label, self.robust_fit)
         
         # huber_epsilon: only shown when fit_type == linear AND robust_fit is checked
         self._huber_epsilon_label = QLabel("Huber Epsilon:")
-        self.huber_epsilon = QLineEdit(self.config['Photometry_Processing'].get('huber_epsilon', 'auto'))
+        self.huber_epsilon = QLineEdit(str(self.config['Signal_Fitting'].get('huber_epsilon', 'auto')))
         self.huber_epsilon.setToolTip("'auto' or 'mad' = calculate from MAD of noise floor; or enter a numeric value (must be > 1.0)")
         controls_form.addRow(self._huber_epsilon_label, self.huber_epsilon)
         
         # arPLS controls — only shown when fit_type == arpls
         self._arpls_lambda_label = QLabel("arPLS Lambda:")
-        self.arpls_lambda = QLineEdit(self.config['Photometry_Processing'].get('arpls_lambda', '1e5'))
+        self.arpls_lambda = QLineEdit(str(self.config['Signal_Fitting'].get('arpls_lambda', 1e5)))
         controls_form.addRow(self._arpls_lambda_label, self.arpls_lambda)
         
         self._arpls_max_iter_label = QLabel("arPLS Max Iterations:")
         self.arpls_max_iter = QSpinBox()
         self.arpls_max_iter.setRange(1, 1000)
-        try:
-            self.arpls_max_iter.setValue(int(self.config['Photometry_Processing'].get('arpls_max_iter', '50')))
-        except ValueError:
-            self.arpls_max_iter.setValue(50)
+        self.arpls_max_iter.setValue(int(self.config['Signal_Fitting'].get('arpls_max_iter', 50)))
         controls_form.addRow(self._arpls_max_iter_label, self.arpls_max_iter)
         
         self._arpls_tol_label = QLabel("arPLS Tolerance:")
-        self.arpls_tol = QLineEdit(self.config['Photometry_Processing'].get('arpls_tol', '1e-6'))
+        self.arpls_tol = QLineEdit(str(self.config['Signal_Fitting'].get('arpls_tol', 1e-6)))
         controls_form.addRow(self._arpls_tol_label, self.arpls_tol)
         
         self._arpls_eps_label = QLabel("arPLS Epsilon:")
-        self.arpls_eps = QLineEdit(self.config['Photometry_Processing'].get('arpls_eps', '1e-8'))
+        self.arpls_eps = QLineEdit(str(self.config['Signal_Fitting'].get('arpls_eps', 1e-8)))
         controls_form.addRow(self._arpls_eps_label, self.arpls_eps)
         
         self._arpls_weight_scale_label = QLabel("arPLS Weight Scale:")
-        self.arpls_weight_scale = QLineEdit(self.config['Photometry_Processing'].get('arpls_weight_scale', '2.0'))
+        self.arpls_weight_scale = QLineEdit(str(self.config['Signal_Fitting'].get('arpls_weight_scale', 2.0)))
         controls_form.addRow(self._arpls_weight_scale_label, self.arpls_weight_scale)
         
         self._arpls_downsample_label = QLabel("arPLS Downsample:")
         self.arpls_downsample = QCheckBox()
-        ds_str = self.config['Photometry_Processing'].get('arpls_downsample', 'true')
-        self.arpls_downsample.setChecked(ds_str.lower() in ('true', '1'))
+        self.arpls_downsample.setChecked(bool(self.config['Signal_Fitting'].get('arpls_downsample', True)))
         controls_form.addRow(self._arpls_downsample_label, self.arpls_downsample)
         
         controls_layout.addLayout(controls_form)
@@ -499,37 +490,15 @@ class FiberPhotometryApp(QMainWindow):
         self.setWindowTitle("Fiber Photometry Data Analyzer")
         self.resize(1200, 800)
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        self.config_file_path = os.path.normpath(os.path.join(script_dir, '..', 'Config.ini'))
-        self.config = configparser.ConfigParser()
+        self._package_dir = os.path.normpath(os.path.join(script_dir, '..'))
+        self.config = ConfigManager(self._package_dir)
 
         self.results_hdf5_path = ''
         self.plot_data = pd.DataFrame()
         self.plot_window = None
 
-        try:
-            if not self.config.read(self.config_file_path):
-                QMessageBox.warning(self, "Config File Warning", f"Config file '{self.config_file_path}' not found or empty. Defaults may not be loaded correctly.")
-        except configparser.Error as e:
-            QMessageBox.critical(self, "Config File Error", f"Error reading config file '{self.config_file_path}': {e}")
-
         # Capture the original configuration text so we can detect changes and prompt to save on exit
-        try:
-            import io
-            if os.path.exists(self.config_file_path):
-                try:
-                    with open(self.config_file_path, 'r', encoding='utf-8') as f:
-                        self._original_config_text = f.read()
-                except Exception:
-                    # Fallback to writing current parser state
-                    buf = io.StringIO()
-                    self.config.write(buf)
-                    self._original_config_text = buf.getvalue()
-            else:
-                buf = io.StringIO()
-                self.config.write(buf)
-                self._original_config_text = buf.getvalue()
-        except Exception:
-            self._original_config_text = None
+        self._original_config_text = self.config.to_json_string()
 
         self.template_loaded = False
         
@@ -823,16 +792,47 @@ class FiberPhotometryApp(QMainWindow):
         info_layout.addRow("CPU Cores Available:", QLabel(cores))
         info_group.setLayout(info_layout)
         layout.addWidget(info_group)
+
+        # Data Sources
+        sources_group = QGroupBox("Data Sources")
+        sources_layout = QFormLayout()
+
+        beh_vendors = [v['vendor_name'] for v in self.config.discover_vendors('Behaviour')]
+        if not beh_vendors:
+            beh_vendors = ['ABET II']
+        self.behaviour_vendor_combo = QComboBox()
+        self.behaviour_vendor_combo.addItems(beh_vendors)
+        current_beh = self.config.get('Vendors', 'behaviour_vendor', 'ABET II')
+        if current_beh in beh_vendors:
+            self.behaviour_vendor_combo.setCurrentText(current_beh)
+        sources_layout.addRow("Behaviour Data Source:", self.behaviour_vendor_combo)
+
+        sig_vendors = [v['vendor_name'] for v in self.config.discover_vendors('Photometry')]
+        if not sig_vendors:
+            sig_vendors = ['Doric']
+        self.signal_vendor_combo = QComboBox()
+        self.signal_vendor_combo.addItems(sig_vendors)
+        current_sig = self.config.get('Vendors', 'signal_vendor', 'Doric')
+        if current_sig in sig_vendors:
+            self.signal_vendor_combo.setCurrentText(current_sig)
+        sources_layout.addRow("Signal Data Source:", self.signal_vendor_combo)
+
+        apply_vendor_btn = QPushButton("Apply")
+        apply_vendor_btn.clicked.connect(self._apply_vendor_selection)
+        sources_layout.addRow("", apply_vendor_btn)
+        sources_group.setLayout(sources_layout)
+        layout.addWidget(sources_group)
         
         # Quick Start Guide
         guide_group = QGroupBox("Quick Start Guide")
         guide_layout = QVBoxLayout()
         guide_text = QLabel(
-            "1. Go to 'Event Sheet' to load or create your event definitions.\n"
-            "2. Go to 'File Pair' to link Doric and Abet files.\n"
-            "3. Configure your processing parameters in the 'Options' tab.\n"
-            "4. Run your analysis from the 'Analysis' tab.\n"
-            "5. View results and generate plots in the 'Results' and 'Visualization' tabs."
+            "1. Select your Behaviour and Signal data sources above.\n"
+            "2. Go to 'Event Sheet' to load or create your event definitions.\n"
+            "3. Go to 'File Pair' to link signal and behaviour files.\n"
+            "4. Configure your processing parameters in the 'Options' tab.\n"
+            "5. Run your analysis from the 'Analysis' tab.\n"
+            "6. View results and generate plots in the 'Results' and 'Visualization' tabs."
         )
         guide_text.setWordWrap(True)
         guide_layout.addWidget(guide_text)
@@ -841,6 +841,22 @@ class FiberPhotometryApp(QMainWindow):
         
         layout.addStretch()
         self.home_tab.setLayout(layout)
+
+    def _apply_vendor_selection(self):
+        """Apply the vendor selections from the home screen dropdowns."""
+        beh_vendor = self.behaviour_vendor_combo.currentText()
+        sig_vendor = self.signal_vendor_combo.currentText()
+        changed = False
+        if self.config.get('Vendors', 'behaviour_vendor') != beh_vendor:
+            self.config.load_vendor('Behaviour', beh_vendor)
+            changed = True
+        if self.config.get('Vendors', 'signal_vendor') != sig_vendor:
+            self.config.load_vendor('Photometry', sig_vendor)
+            changed = True
+        if changed:
+            self.update_ui_from_config()
+            QMessageBox.information(self, "Vendor Changed",
+                                    "Vendor selection applied. Options tab updated.")
 
     def init_event_sheet_tab(self):
         layout = QVBoxLayout()
@@ -1297,7 +1313,10 @@ class FiberPhotometryApp(QMainWindow):
                 display_key = key.replace("_", " ")
                 widget_attr_name = f"{section_name}_{key}_checkbox"
                 checkbox = QCheckBox()
-                checkbox.setChecked(value.lower() == 'true' or value == '1')
+                if isinstance(value, bool):
+                    checkbox.setChecked(value)
+                else:
+                    checkbox.setChecked(str(value).lower() in ('true', '1'))
                 output_group_layout.addRow(display_key, checkbox)
                 setattr(self, widget_attr_name, checkbox)
             output_group_box.setLayout(output_group_layout)
@@ -1450,9 +1469,9 @@ class FiberPhotometryApp(QMainWindow):
         # populate selects from any existing results
         self.update_animal_date_selects()
         
-        self.event_prior_input = QLineEdit(self.config['Event_Window'].get('event_prior', '5.0'))
+        self.event_prior_input = QLineEdit(str(self.config['Event_Window'].get('event_prior', 5.0)))
         self.event_prior_input.setDisabled(True)
-        self.event_follow_input = QLineEdit(self.config['Event_Window'].get('event_follow', '10.0'))
+        self.event_follow_input = QLineEdit(str(self.config['Event_Window'].get('event_follow', 10.0)))
         self.event_follow_input.setDisabled(True)
         
         # Visualization mode selector
@@ -2089,7 +2108,7 @@ class FiberPhotometryApp(QMainWindow):
         multibox_options = ['trial_start_stage', 'trial_end_stage', 'exclusion_list']
         file_path_keys = {'file_list_path': 'open', 'event_list_path': 'open', 'output_path': 'directory', 'template_path': 'open'}
         for section in self.config.sections():
-            if section == "Output":
+            if section in ('Output', 'Vendors'):
                 continue
             group_box = QGroupBox(section.replace("_", " "))
             group_layout = QFormLayout()
@@ -2106,7 +2125,7 @@ class FiberPhotometryApp(QMainWindow):
                     display_key = key.replace("_", " ")
                     fit_type_combo = QComboBox()
                     fit_type_combo.addItems(['linear', 'expodecay', 'arpls'])
-                    fit_type_combo.setCurrentText(value)
+                    fit_type_combo.setCurrentText(str(value) if value is not None else 'linear')
                     group_layout.addRow(display_key, fit_type_combo)
                     setattr(self, f"{section}_fit_type_combobox", fit_type_combo)
 
@@ -2115,6 +2134,8 @@ class FiberPhotometryApp(QMainWindow):
                 if key == 'fit_type':
                     continue
                 value = self.config[section][key]
+                # Normalise to string for display/comparison helpers; None becomes ''
+                value_str = '' if value is None else str(value)
                 display_key = key.replace("_", " ")
                 widget_attr_base = f"{section}_{key}"
 
@@ -2122,8 +2143,8 @@ class FiberPhotometryApp(QMainWindow):
                 if key in multibox_options:
                     multicombobox_edit = MultiSelectComboBox()
                     setattr(self, f"{widget_attr_base}_multicombobox_edit", multicombobox_edit)
-                    if value:
-                        config_items = [item.strip() for item in value.split(',') if item.strip()]
+                    if value_str:
+                        config_items = [item.strip() for item in value_str.split(',') if item.strip()]
                         for item_text in config_items:
                             multicombobox_edit.add_option(item_text)
                             for i in range(multicombobox_edit.list_widget.count()):
@@ -2136,7 +2157,7 @@ class FiberPhotometryApp(QMainWindow):
                 # File path keys: line edit + browse button
                 elif key in file_path_keys:
                     hbox = QHBoxLayout()
-                    line_edit = QLineEdit(value)
+                    line_edit = QLineEdit(value_str)
                     browse_btn = QPushButton("Browse...")
 
                     def make_browse_handler(le=line_edit, k=key, dk=display_key):
@@ -2166,7 +2187,7 @@ class FiberPhotometryApp(QMainWindow):
                 elif key == 'filter_type':
                     combo = QComboBox()
                     combo.addItems(['lowpass', 'smoothing'])
-                    combo.setCurrentText(value)
+                    combo.setCurrentText(value_str or 'lowpass')
                     group_layout.addRow(display_key, combo)
                     setattr(self, f"{widget_attr_base}_combobox", combo)
 
@@ -2176,7 +2197,7 @@ class FiberPhotometryApp(QMainWindow):
                     ft_attr = f"{section}_filter_type_combobox"
                     ft_combo = getattr(self, ft_attr, None)
 
-                    def update_filter_name_options(ftc=ft_combo, c=combo, v=value):
+                    def update_filter_name_options(ftc=ft_combo, c=combo, v=value_str):
                         ftype = ftc.currentText() if ftc else 'lowpass'
                         c.clear()
                         if ftype == 'lowpass':
@@ -2187,7 +2208,7 @@ class FiberPhotometryApp(QMainWindow):
 
                     if ft_combo:
                         ft_combo.currentTextChanged.connect(
-                            lambda _, ftc=ft_combo, c=combo, v=value: update_filter_name_options(ftc, c, v))
+                            lambda _, ftc=ft_combo, c=combo, v=value_str: update_filter_name_options(ftc, c, v))
                     update_filter_name_options()
                     group_layout.addRow(display_key, combo)
                     setattr(self, f"{widget_attr_base}_combobox", combo)
@@ -2199,10 +2220,10 @@ class FiberPhotometryApp(QMainWindow):
                     spin_box = QSpinBox()
                     if key == 'filter_cutoff':
                         spin_box.setRange(1, 1000)
-                        default_value = int(value) if value.isdigit() else 10
+                        default_value = int(value) if value is not None else 10
                     else:
                         spin_box.setRange(1, 10)
-                        default_value = int(value) if value.isdigit() else 4
+                        default_value = int(value) if value is not None else 4
                     spin_box.setValue(default_value)
                     label = QLabel(display_key)
                     group_layout.addRow(label, spin_box)
@@ -2225,10 +2246,7 @@ class FiberPhotometryApp(QMainWindow):
                     fn_attr = f"{section}_filter_name_combobox"
                     fn_combo = getattr(self, fn_attr, None)
                     spin_box = QSpinBox()
-                    try:
-                        spin_box.setValue(int(value))
-                    except ValueError:
-                        spin_box.setValue(3)
+                    spin_box.setValue(int(value) if value is not None else 3)
                     label = QLabel(display_key)
                     group_layout.addRow(label, spin_box)
                     spin_box.setVisible(False)
@@ -2251,7 +2269,7 @@ class FiberPhotometryApp(QMainWindow):
                     ft_attr = f"{section}_filter_type_combobox"
                     fn_combo = getattr(self, fn_attr, None)
                     ft_combo = getattr(self, ft_attr, None)
-                    ripple_edit = QLineEdit(value)
+                    ripple_edit = QLineEdit(value_str)
                     label = QLabel(display_key)
                     group_layout.addRow(label, ripple_edit)
                     ripple_edit.setVisible(False)
@@ -2276,7 +2294,7 @@ class FiberPhotometryApp(QMainWindow):
                 # despike: checkbox — despike_window / despike_threshold depend on this
                 elif key == 'despike':
                     checkbox = QCheckBox()
-                    checkbox.setChecked(value.lower() in ('true', '1'))
+                    checkbox.setChecked(bool(value))
                     group_layout.addRow(display_key, checkbox)
                     setattr(self, f"{widget_attr_base}_checkbox", checkbox)
                     despike_checkbox_ref[0] = checkbox
@@ -2286,10 +2304,7 @@ class FiberPhotometryApp(QMainWindow):
                     spin_box = QSpinBox()
                     spin_box.setRange(3, 100001)
                     spin_box.setSingleStep(2)
-                    try:
-                        spin_box.setValue(int(value))
-                    except ValueError:
-                        spin_box.setValue(2001)
+                    spin_box.setValue(int(value) if value is not None else 2001)
                     label = QLabel(display_key)
                     group_layout.addRow(label, spin_box)
                     spin_box.setVisible(False)
@@ -2299,7 +2314,7 @@ class FiberPhotometryApp(QMainWindow):
 
                 # despike_threshold: float QLineEdit, only visible when despike is checked
                 elif key == 'despike_threshold':
-                    threshold_edit = QLineEdit(value)
+                    threshold_edit = QLineEdit(value_str)
                     label = QLabel(display_key)
                     group_layout.addRow(label, threshold_edit)
                     threshold_edit.setVisible(False)
@@ -2310,7 +2325,7 @@ class FiberPhotometryApp(QMainWindow):
                 # robust_fit: checkbox, only visible when fit_type == linear
                 elif key == 'robust_fit':
                     checkbox = QCheckBox()
-                    checkbox.setChecked(value.lower() in ('true', '1'))
+                    checkbox.setChecked(bool(value))
                     label = QLabel(display_key)
                     group_layout.addRow(label, checkbox)
                     setattr(self, f"{widget_attr_base}_checkbox", checkbox)
@@ -2318,7 +2333,7 @@ class FiberPhotometryApp(QMainWindow):
 
                 # huber_epsilon: only visible when fit_type == linear (grouped with robust_fit)
                 elif key == 'huber_epsilon':
-                    huber_edit = QLineEdit(value)
+                    huber_edit = QLineEdit(value_str)
                     huber_edit.setToolTip("'auto' or 'mad' = calculate from MAD of noise floor; or enter a numeric value (must be > 1.0)")
                     label = QLabel("Huber Epsilon:")
                     group_layout.addRow(label, huber_edit)
@@ -2329,27 +2344,27 @@ class FiberPhotometryApp(QMainWindow):
 
                 # ARPLS options: all collected for show/hide; booleans get checkboxes, others get line edits
                 elif key.startswith('arpls_'):
-                    if value.lower() in ('true', 'false', '1', '0'):
+                    if isinstance(value, bool):
                         arpls_widget = QCheckBox()
-                        arpls_widget.setChecked(value.lower() in ('true', '1'))
+                        arpls_widget.setChecked(value)
                         setattr(self, f"{widget_attr_base}_checkbox", arpls_widget)
                     else:
-                        arpls_widget = QLineEdit(value)
+                        arpls_widget = QLineEdit(value_str)
                         setattr(self, f"{widget_attr_base}_line_edit", arpls_widget)
                     label = QLabel(display_key)
                     group_layout.addRow(label, arpls_widget)
                     arpls_widgets.append((label, arpls_widget))
 
                 # Generic boolean values (except Output section) get checkboxes
-                elif value.lower() in ('true', 'false', '1', '0') and section != "Output":
+                elif isinstance(value, bool) and section != "Output":
                     checkbox = QCheckBox()
-                    checkbox.setChecked(value.lower() in ('true', '1'))
+                    checkbox.setChecked(value)
                     group_layout.addRow(display_key, checkbox)
                     setattr(self, f"{widget_attr_base}_checkbox", checkbox)
 
                 # Everything else: plain QLineEdit
                 else:
-                    line_edit = QLineEdit(value)
+                    line_edit = QLineEdit(value_str)
                     setattr(self, f"{widget_attr_base}_line_edit", line_edit)
                     group_layout.addRow(display_key, line_edit)
 
@@ -2389,8 +2404,8 @@ class FiberPhotometryApp(QMainWindow):
             group_box.setLayout(group_layout)
             content_layout.addWidget(group_box)
 
-            # Add preview button underneath Photometry Processing group
-            if section == "Photometry_Processing":
+            # Add preview button underneath the Signal Filter group
+            if section == "Signal_Filter":
                 preview_btn = QPushButton("Preview Photometry Signal")
                 preview_btn.clicked.connect(self.open_photometry_preview)
                 content_layout.addWidget(preview_btn)
@@ -2420,9 +2435,9 @@ class FiberPhotometryApp(QMainWindow):
     def update_options_with_template(self):
         if self.template_loaded:
             widgets_to_update = [
-                'ITI_Window_trial_start_stage_multicombobox_edit',
-                'ITI_Window_trial_end_stage_multicombobox_edit',
-                'Filter_exclusion_list_multicombobox_edit'
+                'ABET_trial_start_stage_multicombobox_edit',
+                'ABET_trial_end_stage_multicombobox_edit',
+                'ABET_exclusion_list_multicombobox_edit'
             ]
             for stage in self.trial_stage_options:
                 for widget_name in widgets_to_update:
@@ -2443,10 +2458,14 @@ class FiberPhotometryApp(QMainWindow):
                 widget_attr_base = f"{section}_{key}"
                 if hasattr(self, f"{widget_attr_base}_checkbox"):
                     widget = getattr(self, f"{widget_attr_base}_checkbox")
-                    widget.setChecked(value.lower() == 'true' or value == '1')
+                    if isinstance(value, bool):
+                        widget.setChecked(value)
+                    else:
+                        widget.setChecked(str(value).lower() in ('true', '1'))
                 elif hasattr(self, f"{widget_attr_base}_multicombobox_edit"):
                     widget = getattr(self, f"{widget_attr_base}_multicombobox_edit")
-                    config_values_list = [v.strip() for v in value.split(',') if v.strip()]
+                    value_str = '' if (value is None or not isinstance(value, str)) else value
+                    config_values_list = [v.strip() for v in value_str.split(',') if v.strip()]
                     for i in range(widget.list_widget.count()):
                         widget.list_widget.item(i).setCheckState(Qt.Unchecked)
                     for val_from_config in config_values_list:
@@ -2460,31 +2479,33 @@ class FiberPhotometryApp(QMainWindow):
                                 break
                 elif hasattr(self, f"{widget_attr_base}_line_edit"):
                     widget = getattr(self, f"{widget_attr_base}_line_edit")
-                    widget.setText(value)
+                    widget.setText('' if value is None else str(value))
+        # Update vendor dropdowns on the home screen
+        if 'Vendors' in self.config and hasattr(self, 'behaviour_vendor_combo'):
+            beh_vendor = self.config['Vendors'].get('behaviour_vendor', 'ABET II')
+            sig_vendor = self.config['Vendors'].get('signal_vendor', 'Doric')
+            idx = self.behaviour_vendor_combo.findText(beh_vendor)
+            if idx >= 0:
+                self.behaviour_vendor_combo.setCurrentIndex(idx)
+            if hasattr(self, 'signal_vendor_combo'):
+                idx = self.signal_vendor_combo.findText(sig_vendor)
+                if idx >= 0:
+                    self.signal_vendor_combo.setCurrentIndex(idx)
         if self.template_loaded:
             self.update_options_with_template()
 
     def save_config_changes_to_current_file(self):
-        # Sync UI widgets into the in-memory config, then write to file
         self.update_config_from_ui()
         try:
-            with open(self.config_file_path, 'w', encoding='utf-8') as configfile:
-                self.config.write(configfile)
-            # Update snapshot so subsequent close checks know this is the saved state
-            try:
-                import io
-                buf = io.StringIO()
-                self.config.write(buf)
-                self._original_config_text = buf.getvalue()
-            except Exception:
-                self._original_config_text = None
-            QMessageBox.information(self, "Saved", f"Configuration changes saved successfully to {self.config_file_path}.")
+            self.config.save()
+            self._original_config_text = self.config.to_json_string()
+            QMessageBox.information(self, "Saved", "Configuration changes saved successfully.")
         except IOError as e:
-            QMessageBox.critical(self, "Save Error", f"Failed to save configuration to {self.config_file_path}: {e}")
+            QMessageBox.critical(self, "Save Error", f"Failed to save configuration: {e}")
 
     def update_config_from_ui(self):
         """Read widgets created in the Options tab and write their values into self.config (in-memory).
-        This centralizes UI->config mapping so callers can update before writing to disk.
+        Preserves native Python types (bool, int, float, str) so JSON serialization stays clean.
         """
         for section in self.config.sections():
             for key in self.config[section]:
@@ -2496,28 +2517,35 @@ class FiberPhotometryApp(QMainWindow):
                          getattr(self, f"{widget_attr_base}_combobox", None) or \
                          getattr(self, f"{widget_attr_base}_spin_box", None) or \
                          getattr(self, f"{widget_attr_base}_double_spin_box", None)
-                # Map widget types back to string values for config
                 if widget is None:
                     continue
+                orig = self.config[section].get(key)
                 try:
-                    # QLineEdit
                     if isinstance(widget, QLineEdit):
-                        self.config[section][key] = widget.text()
-                    # QCheckBox
+                        text_val = widget.text()
+                        # Preserve the numeric type of the original value
+                        if isinstance(orig, float):
+                            try:
+                                self.config[section][key] = float(text_val)
+                            except ValueError:
+                                self.config[section][key] = text_val
+                        elif isinstance(orig, int) and not isinstance(orig, bool):
+                            try:
+                                self.config[section][key] = int(text_val)
+                            except ValueError:
+                                self.config[section][key] = text_val
+                        else:
+                            self.config[section][key] = text_val
                     elif isinstance(widget, QCheckBox):
-                        self.config[section][key] = 'true' if widget.isChecked() else 'false'
-                    # MultiSelectComboBox
+                        self.config[section][key] = widget.isChecked()
                     elif isinstance(widget, MultiSelectComboBox):
                         checked_items = widget.get_checked_items()
                         self.config[section][key] = ",".join(checked_items)
-                    # QComboBox
                     elif isinstance(widget, QComboBox):
                         self.config[section][key] = widget.currentText()
-                    # QSpinBox (including the integer spinboxes used for various numeric options)
                     elif isinstance(widget, QSpinBox):
-                        self.config[section][key] = str(widget.value())
+                        self.config[section][key] = widget.value()
                     else:
-                        # Fallback: try to get a sensible string value
                         val = None
                         if hasattr(widget, 'text'):
                             try:
@@ -2530,41 +2558,38 @@ class FiberPhotometryApp(QMainWindow):
                             except Exception:
                                 pass
                         if val is not None:
-                            self.config[section][key] = str(val)
+                            self.config[section][key] = val
                 except Exception:
-                    # If a single widget fails to serialize, skip it but don't abort the whole update
                     continue
 
     def load_configuration_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Load Configuration File", "", "INI Files (*.ini)")
+        file_path, _ = QFileDialog.getOpenFileName(self, "Load Configuration File", "", "JSON Files (*.json)")
         if file_path:
-            self.config_file_path = file_path
-            self.config = configparser.ConfigParser()
             try:
-                if not self.config.read(self.config_file_path):
-                    QMessageBox.warning(self, "Load Warning", f"Configuration file {self.config_file_path} not found or empty.")
-                    return
+                import os as _os
+                new_base = _os.path.dirname(_os.path.abspath(file_path))
+                self._package_dir = new_base
+                self.config = ConfigManager(new_base)
                 self.update_ui_from_config()
-                # After successfully loading a new configuration, snapshot it as the original
-                try:
-                    with open(self.config_file_path, 'r', encoding='utf-8') as f:
-                        self._original_config_text = f.read()
-                except Exception:
-                    import io
-                    buf = io.StringIO()
-                    self.config.write(buf)
-                    self._original_config_text = buf.getvalue()
-                QMessageBox.information(self, "Loaded", f"Configuration loaded from: {self.config_file_path}")
-            except configparser.Error as e:
-                QMessageBox.critical(self, "Load Error", f"Error reading configuration file {self.config_file_path}: {e}")
+                self._original_config_text = self.config.to_json_string()
+                QMessageBox.information(self, "Loaded", f"Configuration loaded from: {file_path}")
             except Exception as e:
                 QMessageBox.critical(self, "Load Error", f"An unexpected error occurred while loading configuration: {e}")
 
     def save_configuration_as(self):
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save Configuration As...", "", "INI Files (*.ini)")
+        import shutil as _shutil
+        import os as _os
+        default_main = _os.path.join(self._package_dir, 'config.json')
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Configuration As...", default_main, "JSON Files (*.json)")
         if file_path:
-            self.config_file_path = file_path
-            self.save_config_changes_to_current_file()
+            self.update_config_from_ui()
+            try:
+                self.config.save()
+                _shutil.copy2(default_main, file_path)
+                QMessageBox.information(self, "Saved", f"Configuration backup saved to:\n{file_path}")
+            except Exception as e:
+                QMessageBox.critical(self, "Save Error", f"Failed to save configuration: {e}")
 
     def load_defaults_from_config(self):
         """Load default event and file-pair sheets from the [Filepath] section in the config.
@@ -2579,7 +2604,7 @@ class FiberPhotometryApp(QMainWindow):
                 return
 
             # 1. Load template file FIRST so that subsequent table loading can use dropdowns
-            template_path = self.config['Filepath'].get('template_path', '').strip()
+            template_path = (self.config['Filepath'].get('template_path') or '').strip()
             if template_path:
                 if os.path.isfile(template_path):
                     try:
@@ -2590,8 +2615,8 @@ class FiberPhotometryApp(QMainWindow):
                 else:
                     print(f"Warning: Template path from config is not a valid file: {template_path}")
 
-            file_list_path = self.config['Filepath'].get('file_list_path', '').strip()
-            event_list_path = self.config['Filepath'].get('event_list_path', '').strip()
+            file_list_path = (self.config['Filepath'].get('file_list_path') or '').strip()
+            event_list_path = (self.config['Filepath'].get('event_list_path') or '').strip()
 
             # 2. Load event sheet if provided and is a file
             if event_list_path:
@@ -2621,10 +2646,10 @@ class FiberPhotometryApp(QMainWindow):
             print(f"Warning: load_defaults_from_config failed: {e}")
 
     def _get_config_text(self):
-        import io
-        buf = io.StringIO()
-        self.config.write(buf)
-        return buf.getvalue()
+        try:
+            return self.config.to_json_string()
+        except Exception:
+            return ''
 
     def closeEvent(self, event):
         """Prompt to save config if it has changed since it was loaded/snapshotted."""
@@ -2646,28 +2671,18 @@ class FiberPhotometryApp(QMainWindow):
             changed = False
 
         if changed:
-            # Auto-save changes without prompting, but allow cancel if save fails
             try:
-                with open(self.config_file_path, 'w', encoding='utf-8') as configfile:
-                    self.config.write(configfile)
-                # Update snapshot so subsequent checks are accurate
-                try:
-                    import io
-                    buf = io.StringIO()
-                    self.config.write(buf)
-                    self._original_config_text = buf.getvalue()
-                except Exception:
-                    self._original_config_text = None
+                self.config.save()
+                self._original_config_text = self.config.to_json_string()
             except Exception as e:
-                # If saving fails, give the user a chance to cancel close
-                reply = QMessageBox.question(self, "Save Failed",
-                                             f"Failed to save configuration to {self.config_file_path}: {e}\nDo you want to cancel closing and try to save manually?",
-                                             QMessageBox.Yes | QMessageBox.No,
-                                             QMessageBox.Yes)
+                reply = QMessageBox.question(
+                    self, "Save Failed",
+                    f"Failed to save configuration: {e}\nDo you want to cancel closing and try to save manually?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.Yes)
                 if reply == QMessageBox.Yes:
                     event.ignore()
                     return
-                # If user chooses No, proceed to close without saved changes
         event.accept()
 
 if __name__ == '__main__':
