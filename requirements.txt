@@ -5,3 +5,9 @@ pandas
 h5py
 matplotlib
 scikit-learn
+statsmodels
+dtw-python
+jax
+jaxlib
+dynamax
+IPython
