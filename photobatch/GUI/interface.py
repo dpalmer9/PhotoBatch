@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget, Q
                                QPushButton, QLabel, QFileDialog, QLineEdit, QTableWidget,
                                QTableWidgetItem, QFormLayout, QMessageBox,
                                QGroupBox, QCheckBox, QHBoxLayout, QMenuBar, QComboBox,
-                               QListWidget, QListWidgetItem, QSpinBox, QScrollArea,
+                               QListWidget, QListWidgetItem, QListView, QSpinBox, QScrollArea,
                                QStackedWidget, QGridLayout, QProgressBar, QStatusBar, QMenu)
 from PySide6.QtCore import Qt, QThread, Signal, QSize
 from PySide6.QtGui import QAction, QIcon, QFont, QCursor
@@ -22,6 +22,15 @@ from matplotlib.figure import Figure
 import numpy as np
 import matplotlib.pyplot as plt
 from PySide6.QtWidgets import QDialog
+
+QT_ITEM_IS_EDITABLE = Qt.ItemFlag.ItemIsEditable
+QT_ITEM_IS_USER_CHECKABLE = Qt.ItemFlag.ItemIsUserCheckable
+QT_CHECKED = Qt.CheckState.Checked
+QT_UNCHECKED = Qt.CheckState.Unchecked
+QT_CUSTOM_CONTEXT_MENU = Qt.ContextMenuPolicy.CustomContextMenu
+QFONT_BOLD = QFont.Weight.Bold
+QMESSAGEBOX_YES = QMessageBox.StandardButton.Yes
+QMESSAGEBOX_NO = QMessageBox.StandardButton.No
 
 class MatplotlibCanvas(FigureCanvas):
     def __init__(self, parent=None, width=5, height=4, dpi=100):
@@ -292,7 +301,10 @@ class PhotometryPreviewWindow(QDialog):
             except ValueError:
                 crop_end_val = 0.0
                 
-            photometry_data.doric_crop(start_time_remove=crop_start_val, end_time_remove=crop_end_val)
+            photometry_data.doric_crop(
+                start_time_remove=float(crop_start_val),
+                end_time_remove=float(crop_end_val),
+            )
             
             # Plot Raw
             self.raw_canvas.axes.clear()
@@ -331,8 +343,11 @@ class PhotometryPreviewWindow(QDialog):
             
             # Plot Filtered
             self.filtered_canvas.axes.clear()
-            self.filtered_canvas.axes.plot(time_data, filtered_f0, label='Filtered Control', alpha=0.8)
-            self.filtered_canvas.axes.plot(time_data, filtered_f, label='Filtered Active', alpha=0.8)
+            filtered_time = np.asarray(time_data, dtype=float)
+            filtered_control = np.asarray(filtered_f0, dtype=float)
+            filtered_active = np.asarray(filtered_f, dtype=float)
+            self.filtered_canvas.axes.plot(filtered_time, filtered_control, label='Filtered Control', alpha=0.8)
+            self.filtered_canvas.axes.plot(filtered_time, filtered_active, label='Filtered Active', alpha=0.8)
             self.filtered_canvas.axes.legend()
             self.filtered_canvas.axes.set_xlabel('Time (s)')
             self.filtered_canvas.axes.set_ylabel('Fluorescence')
@@ -401,9 +416,9 @@ class MultiSelectComboBox(QWidget):
         self.line_edit.setPlaceholderText("Select or add new entries...")
         self.line_edit.returnPressed.connect(self.add_custom_entry)
         self.list_widget = QListWidget()
-        self.list_widget.setFlow(QListWidget.LeftToRight)
+        self.list_widget.setFlow(QListView.Flow.LeftToRight)
         self.list_widget.setWrapping(True)
-        self.list_widget.setResizeMode(QListWidget.Adjust)
+        self.list_widget.setResizeMode(QListView.ResizeMode.Adjust)
         self.list_widget.setSpacing(4)
         self.list_widget.setMaximumHeight(100)
         layout.addWidget(self.line_edit)
@@ -412,8 +427,8 @@ class MultiSelectComboBox(QWidget):
     def add_option(self, option_text):
         if option_text not in [self.list_widget.item(i).text() for i in range(self.list_widget.count())]:
             item = QListWidgetItem(option_text)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Unchecked)
+            item.setFlags(item.flags() | QT_ITEM_IS_USER_CHECKABLE)
+            item.setCheckState(QT_UNCHECKED)
             self.list_widget.addItem(item)
 
     def add_custom_entry(self):
@@ -424,7 +439,7 @@ class MultiSelectComboBox(QWidget):
 
     def get_checked_items(self):
         return [self.list_widget.item(i).text() for i in range(self.list_widget.count())
-                if self.list_widget.item(i).checkState() == Qt.Checked]
+                if self.list_widget.item(i).checkState() == QT_CHECKED]
 
 class FilePathWidget(QWidget):
     """A composite widget with a QLineEdit and a browse button ('...') for file path input."""
@@ -776,7 +791,7 @@ class FiberPhotometryApp(QMainWindow):
         
         # Welcome Header
         welcome_label = QLabel("Welcome to the Fiber Photometry Data Analyzer")
-        welcome_label.setFont(QFont("Inter", 18, QFont.Bold))
+        welcome_label.setFont(QFont("Inter", 18, QFONT_BOLD))
         layout.addWidget(welcome_label)
         
         # System Info Box
@@ -869,7 +884,7 @@ class FiberPhotometryApp(QMainWindow):
         self.event_table = QTableWidget()
         self.event_table.setColumnCount(6)
         self.event_table.setHorizontalHeaderLabels(['event_alias','event_type', 'event_name', 'event_group', 'event_arg', 'num_filter'])
-        self.event_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.event_table.setContextMenuPolicy(QT_CUSTOM_CONTEXT_MENU)
         self.event_table.customContextMenuRequested.connect(lambda pos: self.show_table_context_menu(pos, self.event_table))
         layout.addWidget(self.event_table)
         button_layout = QHBoxLayout()
@@ -891,7 +906,7 @@ class FiberPhotometryApp(QMainWindow):
         self.file_pair_table = QTableWidget()
         self.file_pair_table.setColumnCount(6)
         self.file_pair_table.setHorizontalHeaderLabels(['abet_path', 'doric_path', 'ctrl_col_num', 'act_col_num', 'ttl_col_num', 'mode'])
-        self.file_pair_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.file_pair_table.setContextMenuPolicy(QT_CUSTOM_CONTEXT_MENU)
         self.file_pair_table.customContextMenuRequested.connect(lambda pos: self.show_table_context_menu(pos, self.file_pair_table))
         layout.addWidget(self.file_pair_table)
         button_layout = QHBoxLayout()
@@ -955,7 +970,7 @@ class FiberPhotometryApp(QMainWindow):
                         self.filter_event_data(r, text, table_widget, type_col_name=tn, name_col_name=nn, group_col_name=gn)
                     )
                     item = QTableWidgetItem(cell_val)
-                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                    item.setFlags(item.flags() & ~QT_ITEM_IS_EDITABLE)
                     table_widget.setItem(row, col, item)
                     table_widget.setCellWidget(row, col, event_type_combo)
 
@@ -971,14 +986,14 @@ class FiberPhotometryApp(QMainWindow):
                         self.filter_event_group(r, text, table_widget, type_col_name=tn, name_col_name=nn, group_col_name=gn)
                     )
                     item = QTableWidgetItem(cell_val)
-                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                    item.setFlags(item.flags() & ~QT_ITEM_IS_EDITABLE)
                     table_widget.setItem(row, col, item)
                     table_widget.setCellWidget(row, col, event_name_combo)
 
                 elif (header == 'event_group' or header.startswith('filter_group')) and self.template_loaded:
                     event_group_combo = QComboBox()
                     item = QTableWidgetItem(cell_val)
-                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                    item.setFlags(item.flags() & ~QT_ITEM_IS_EDITABLE)
                     table_widget.setItem(row, col, item)
                     table_widget.setCellWidget(row, col, event_group_combo)
 
@@ -992,7 +1007,7 @@ class FiberPhotometryApp(QMainWindow):
                         cell_val = 'True'
                     filter_prior_combo.setCurrentText(cell_val)
                     item = QTableWidgetItem(cell_val)
-                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                    item.setFlags(item.flags() & ~QT_ITEM_IS_EDITABLE)
                     table_widget.setItem(row, col, item)
                     table_widget.setCellWidget(row, col, filter_prior_combo)
 
@@ -1008,19 +1023,19 @@ class FiberPhotometryApp(QMainWindow):
                     # Fix: set a non-editable item for the cell to prevent the table editor from interfering
                     # with the spinbox buttons.
                     item = QTableWidgetItem(str(f_val))
-                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                    item.setFlags(item.flags() & ~QT_ITEM_IS_EDITABLE)
                     table_widget.setItem(row, col, item)
                     table_widget.setCellWidget(row, col, num_filter_spinbox)
 
                 elif header in ('abet_path', 'doric_path'):
                     fp_widget = FilePathWidget(cell_val)
                     item = QTableWidgetItem(cell_val)
-                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                    item.setFlags(item.flags() & ~QT_ITEM_IS_EDITABLE)
                     table_widget.setItem(row, col, item)
                     table_widget.setCellWidget(row, col, fp_widget)
                 else:
                     item = QTableWidgetItem(cell_val)
-                    item.setFlags(item.flags() | Qt.ItemIsEditable)
+                    item.setFlags(item.flags() | QT_ITEM_IS_EDITABLE)
                     table_widget.setItem(row, col, item)
             
             # After widgets are created for the row, initialize the dropdown cascade if applicable
@@ -1119,7 +1134,7 @@ class FiberPhotometryApp(QMainWindow):
                 )
                 event_type_combo.addItems(self.unique_event_types)
                 item = QTableWidgetItem("")
-                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                item.setFlags(item.flags() & ~QT_ITEM_IS_EDITABLE)
                 table_widget.setItem(current_row_count, col, item)
                 table_widget.setCellWidget(current_row_count, col, event_type_combo)
 
@@ -1135,14 +1150,14 @@ class FiberPhotometryApp(QMainWindow):
                     self.filter_event_group(r, text, table_widget, type_col_name=tn, name_col_name=nn, group_col_name=gn)
                 )
                 item = QTableWidgetItem("")
-                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                item.setFlags(item.flags() & ~QT_ITEM_IS_EDITABLE)
                 table_widget.setItem(current_row_count, col, item)
                 table_widget.setCellWidget(current_row_count, col, event_name_combo)
 
             elif (header == 'event_group' or header.startswith('filter_group')) and self.template_loaded:
                 event_group_combo = QComboBox()
                 item = QTableWidgetItem("")
-                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                item.setFlags(item.flags() & ~QT_ITEM_IS_EDITABLE)
                 table_widget.setItem(current_row_count, col, item)
                 table_widget.setCellWidget(current_row_count, col, event_group_combo)
 
@@ -1151,19 +1166,19 @@ class FiberPhotometryApp(QMainWindow):
                 num_filter_spinbox.setValue(0)
                 num_filter_spinbox.valueChanged.connect(lambda value, r=current_row_count: self.adjust_filter_columns(r, value, table_widget))
                 item = QTableWidgetItem("0")
-                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                item.setFlags(item.flags() & ~QT_ITEM_IS_EDITABLE)
                 table_widget.setItem(current_row_count, col, item)
                 table_widget.setCellWidget(current_row_count, col, num_filter_spinbox)
 
             elif header in ('abet_path', 'doric_path'):
                 fp_widget = FilePathWidget()
                 item = QTableWidgetItem("")
-                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                item.setFlags(item.flags() & ~QT_ITEM_IS_EDITABLE)
                 table_widget.setItem(current_row_count, col, item)
                 table_widget.setCellWidget(current_row_count, col, fp_widget)
             else:
                 item = QTableWidgetItem("")
-                item.setFlags(item.flags() | Qt.ItemIsEditable)
+                item.setFlags(item.flags() | QT_ITEM_IS_EDITABLE)
                 table_widget.setItem(current_row_count, col, item)
 
         # Initialize dropdowns for the new row if template is loaded
@@ -1257,7 +1272,7 @@ class FiberPhotometryApp(QMainWindow):
                         item = QTableWidgetItem("")
                         table_widget.setItem(row, base_index + j, item)
                     if h_lower.startswith('filter_type') or h_lower.startswith('filter_name') or h_lower.startswith('filter_group'):
-                        item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                        item.setFlags(item.flags() & ~QT_ITEM_IS_EDITABLE)
                 else:
                     # Clear widget if filter is no longer active for this row
                     table_widget.setCellWidget(row, base_index + j, None)
@@ -1265,7 +1280,7 @@ class FiberPhotometryApp(QMainWindow):
                     if item is None:
                         item = QTableWidgetItem("")
                         table_widget.setItem(row, base_index + j, item)
-                    item.setFlags(item.flags() | Qt.ItemIsEditable)
+                    item.setFlags(item.flags() | QT_ITEM_IS_EDITABLE)
 
         table_widget.resizeColumnsToContents()
 
@@ -2107,6 +2122,31 @@ class FiberPhotometryApp(QMainWindow):
         content_layout = QVBoxLayout(content_widget)
         multibox_options = ['trial_start_stage', 'trial_end_stage', 'exclusion_list']
         file_path_keys = {'file_list_path': 'open', 'event_list_path': 'open', 'output_path': 'directory', 'template_path': 'open'}
+        normalization_mode_combo = None
+
+        def update_normalize_side_options(mode_combo, side_combo, selected_value=None):
+            mode_key = (mode_combo.currentText() if mode_combo else 'whole').strip().lower()
+            previous_value = selected_value if selected_value is not None else side_combo.currentText()
+            if mode_key == 'iti':
+                options = ['End', 'Start', 'Center']
+                default_value = 'End'
+            elif mode_key == 'prior':
+                options = ['Left', 'Right']
+                default_value = 'Left'
+            else:
+                options = ['Left']
+                default_value = 'Left'
+
+            side_combo.blockSignals(True)
+            side_combo.clear()
+            side_combo.addItems(options)
+            if previous_value in options:
+                side_combo.setCurrentText(previous_value)
+            else:
+                side_combo.setCurrentText(default_value)
+            side_combo.setEnabled(mode_key != 'whole')
+            side_combo.blockSignals(False)
+
         for section in self.config.sections():
             if section in ('Output', 'Vendors'):
                 continue
@@ -2116,7 +2156,7 @@ class FiberPhotometryApp(QMainWindow):
             arpls_widgets = []
             robust_fit_widgets = []
             despike_param_widgets = []
-            despike_checkbox_ref = [None]
+            despike_checkbox_ref: list[QCheckBox | None] = [None]
 
             # First pass: create fit_type combo if present
             for key in self.config[section]:
@@ -2150,7 +2190,7 @@ class FiberPhotometryApp(QMainWindow):
                             for i in range(multicombobox_edit.list_widget.count()):
                                 list_item = multicombobox_edit.list_widget.item(i)
                                 if list_item.text() == item_text:
-                                    list_item.setCheckState(Qt.Checked)
+                                    list_item.setCheckState(QT_CHECKED)
                                     break
                     group_layout.addRow(display_key, multicombobox_edit)
 
@@ -2160,24 +2200,23 @@ class FiberPhotometryApp(QMainWindow):
                     line_edit = QLineEdit(value_str)
                     browse_btn = QPushButton("Browse...")
 
-                    def make_browse_handler(le=line_edit, k=key, dk=display_key):
-                        def handler():
-                            mode = file_path_keys.get(k, 'open')
-                            if mode == 'open':
-                                file_path, _ = QFileDialog.getOpenFileName(self, f"Select {dk}", "", "All Files (*)")
-                                if file_path:
-                                    le.setText(file_path)
-                            elif mode == 'directory':
-                                dir_path = QFileDialog.getExistingDirectory(self, f"Select {dk}")
-                                if dir_path:
-                                    le.setText(dir_path)
-                            else:
-                                file_path, _ = QFileDialog.getOpenFileName(self, f"Select {dk}", "", "All Files (*)")
-                                if file_path:
-                                    le.setText(file_path)
-                        return handler
+                    def browse_handler(checked=False, le=line_edit, k=key, dk=display_key):
+                        del checked
+                        mode = file_path_keys.get(k, 'open')
+                        if mode == 'open':
+                            file_path, _ = QFileDialog.getOpenFileName(self, f"Select {dk}", "", "All Files (*)")
+                            if file_path:
+                                le.setText(file_path)
+                        elif mode == 'directory':
+                            dir_path = QFileDialog.getExistingDirectory(self, f"Select {dk}")
+                            if dir_path:
+                                le.setText(dir_path)
+                        else:
+                            file_path, _ = QFileDialog.getOpenFileName(self, f"Select {dk}", "", "All Files (*)")
+                            if file_path:
+                                le.setText(file_path)
 
-                    browse_btn.clicked.connect(make_browse_handler())
+                    browse_btn.clicked.connect(browse_handler)
                     hbox.addWidget(line_edit)
                     hbox.addWidget(browse_btn)
                     setattr(self, f"{widget_attr_base}_line_edit", line_edit)
@@ -2191,13 +2230,39 @@ class FiberPhotometryApp(QMainWindow):
                     group_layout.addRow(display_key, combo)
                     setattr(self, f"{widget_attr_base}_combobox", combo)
 
+                elif key == 'center_z':
+                    combo = QComboBox()
+                    combo.addItems(['whole', 'prior', 'iti'])
+                    combo.setCurrentText(value_str or 'whole')
+                    group_layout.addRow(display_key, combo)
+                    setattr(self, f"{widget_attr_base}_combobox", combo)
+                    if section == 'Normalization':
+                        normalization_mode_combo = combo
+
+                elif key == 'center_method':
+                    combo = QComboBox()
+                    combo.addItems(['mean', 'median'])
+                    combo.setCurrentText(value_str or 'mean')
+                    group_layout.addRow(display_key, combo)
+                    setattr(self, f"{widget_attr_base}_combobox", combo)
+
+                elif key == 'normalize_side':
+                    combo = QComboBox()
+                    mode_combo = normalization_mode_combo
+                    update_normalize_side_options(mode_combo, combo, value_str or None)
+                    if mode_combo:
+                        mode_combo.currentTextChanged.connect(
+                            lambda _, mc=mode_combo, c=combo: update_normalize_side_options(mc, c))
+                    group_layout.addRow(display_key, combo)
+                    setattr(self, f"{widget_attr_base}_combobox", combo)
+
                 # filter_name combobox — options depend on filter_type
                 elif key == 'filter_name':
                     combo = QComboBox()
                     ft_attr = f"{section}_filter_type_combobox"
                     ft_combo = getattr(self, ft_attr, None)
 
-                    def update_filter_name_options(ftc=ft_combo, c=combo, v=value_str):
+                    def refresh_filter_name_options(ftc, c, v):
                         ftype = ftc.currentText() if ftc else 'lowpass'
                         c.clear()
                         if ftype == 'lowpass':
@@ -2208,8 +2273,8 @@ class FiberPhotometryApp(QMainWindow):
 
                     if ft_combo:
                         ft_combo.currentTextChanged.connect(
-                            lambda _, ftc=ft_combo, c=combo, v=value_str: update_filter_name_options(ftc, c, v))
-                    update_filter_name_options()
+                            lambda _, ftc=ft_combo, c=combo, v=value_str: refresh_filter_name_options(ftc, c, v))
+                    refresh_filter_name_options(ft_combo, combo, value_str)
                     group_layout.addRow(display_key, combo)
                     setattr(self, f"{widget_attr_base}_combobox", combo)
 
@@ -2231,15 +2296,15 @@ class FiberPhotometryApp(QMainWindow):
                     label.setVisible(False)
                     setattr(self, f"{widget_attr_base}_spin_box", spin_box)
 
-                    def update_lowpass_vis(ftc=ft_combo, sb=spin_box, lbl=label):
+                    def refresh_lowpass_visibility(ftc, sb, lbl):
                         visible = ftc is not None and ftc.currentText() == 'lowpass'
                         sb.setVisible(visible)
                         lbl.setVisible(visible)
 
                     if ft_combo:
                         ft_combo.currentTextChanged.connect(
-                            lambda _, ftc=ft_combo, sb=spin_box, lbl=label: update_lowpass_vis(ftc, sb, lbl))
-                    update_lowpass_vis()
+                            lambda _, ftc=ft_combo, sb=spin_box, lbl=label: refresh_lowpass_visibility(ftc, sb, lbl))
+                    refresh_lowpass_visibility(ft_combo, spin_box, label)
 
                 # savgol_window / savgol_polyorder: only shown when filter_name == savitsky-golay
                 elif key in ('savgol_window', 'savgol_polyorder'):
@@ -2276,7 +2341,7 @@ class FiberPhotometryApp(QMainWindow):
                     label.setVisible(False)
                     setattr(self, f"{widget_attr_base}_line_edit", ripple_edit)
 
-                    def update_cheby_vis(fnc=fn_combo, ftc=ft_combo, w=ripple_edit, lbl=label):
+                    def refresh_cheby_visibility(fnc, ftc, w, lbl):
                         visible = (fnc is not None and ftc is not None and
                                    fnc.currentText() == 'chebychev' and
                                    ftc.currentText() == 'lowpass')
@@ -2285,11 +2350,11 @@ class FiberPhotometryApp(QMainWindow):
 
                     if fn_combo:
                         fn_combo.currentTextChanged.connect(
-                            lambda _, fnc=fn_combo, ftc=ft_combo, w=ripple_edit, lbl=label: update_cheby_vis(fnc, ftc, w, lbl))
+                            lambda _, fnc=fn_combo, ftc=ft_combo, w=ripple_edit, lbl=label: refresh_cheby_visibility(fnc, ftc, w, lbl))
                     if ft_combo:
                         ft_combo.currentTextChanged.connect(
-                            lambda _, fnc=fn_combo, ftc=ft_combo, w=ripple_edit, lbl=label: update_cheby_vis(fnc, ftc, w, lbl))
-                    update_cheby_vis()
+                            lambda _, fnc=fn_combo, ftc=ft_combo, w=ripple_edit, lbl=label: refresh_cheby_visibility(fnc, ftc, w, lbl))
+                    refresh_cheby_visibility(fn_combo, ft_combo, ripple_edit, label)
 
                 # despike: checkbox — despike_window / despike_threshold depend on this
                 elif key == 'despike':
@@ -2392,14 +2457,14 @@ class FiberPhotometryApp(QMainWindow):
 
             # Connect despike_window / despike_threshold visibility to despike checkbox
             if despike_checkbox_ref[0] and despike_param_widgets:
-                def update_despike_param_visibility(cb=despike_checkbox_ref[0], widgets=list(despike_param_widgets)):
+                def refresh_despike_param_visibility(cb, widgets):
                     visible = cb.isChecked()
                     for lbl, w in widgets:
                         lbl.setVisible(visible)
                         w.setVisible(visible)
                 despike_checkbox_ref[0].stateChanged.connect(
-                    lambda _, cb=despike_checkbox_ref[0], widgets=list(despike_param_widgets): update_despike_param_visibility(cb, widgets))
-                update_despike_param_visibility()
+                    lambda _, cb=despike_checkbox_ref[0], widgets=list(despike_param_widgets): refresh_despike_param_visibility(cb, widgets))
+                refresh_despike_param_visibility(despike_checkbox_ref[0], list(despike_param_widgets))
 
             group_box.setLayout(group_layout)
             content_layout.addWidget(group_box)
@@ -2467,7 +2532,7 @@ class FiberPhotometryApp(QMainWindow):
                     value_str = '' if (value is None or not isinstance(value, str)) else value
                     config_values_list = [v.strip() for v in value_str.split(',') if v.strip()]
                     for i in range(widget.list_widget.count()):
-                        widget.list_widget.item(i).setCheckState(Qt.Unchecked)
+                        widget.list_widget.item(i).setCheckState(QT_UNCHECKED)
                     for val_from_config in config_values_list:
                         found = any(widget.list_widget.item(i).text() == val_from_config for i in range(widget.list_widget.count()))
                         if not found:
@@ -2475,8 +2540,21 @@ class FiberPhotometryApp(QMainWindow):
                         for i in range(widget.list_widget.count()):
                             item = widget.list_widget.item(i)
                             if item.text() == val_from_config:
-                                item.setCheckState(Qt.Checked)
+                                item.setCheckState(QT_CHECKED)
                                 break
+                elif hasattr(self, f"{widget_attr_base}_combobox"):
+                    widget = getattr(self, f"{widget_attr_base}_combobox")
+                    value_str = '' if value is None else str(value)
+                    if value_str and widget.findText(value_str) < 0:
+                        widget.addItem(value_str)
+                    if value_str:
+                        widget.setCurrentText(value_str)
+                elif hasattr(self, f"{widget_attr_base}_spin_box"):
+                    widget = getattr(self, f"{widget_attr_base}_spin_box")
+                    try:
+                        widget.setValue(int(value))
+                    except (TypeError, ValueError):
+                        continue
                 elif hasattr(self, f"{widget_attr_base}_line_edit"):
                     widget = getattr(self, f"{widget_attr_base}_line_edit")
                     widget.setText('' if value is None else str(value))
@@ -2678,9 +2756,9 @@ class FiberPhotometryApp(QMainWindow):
                 reply = QMessageBox.question(
                     self, "Save Failed",
                     f"Failed to save configuration: {e}\nDo you want to cancel closing and try to save manually?",
-                    QMessageBox.Yes | QMessageBox.No,
-                    QMessageBox.Yes)
-                if reply == QMessageBox.Yes:
+                    QMESSAGEBOX_YES | QMESSAGEBOX_NO,
+                    QMESSAGEBOX_YES)
+                if reply == QMESSAGEBOX_YES:
                     event.ignore()
                     return
         event.accept()

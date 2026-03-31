@@ -5,6 +5,7 @@ import csv
 import dateutil.parser
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -143,11 +144,9 @@ class SignalEventData:
         """Search ABET data for a specific event with optional filters."""
         if not self.abet_loaded:
             return
-        (self.abet_event_times,
-         self.event_name,
-         self.event_alias,
-         self.extra_prior,
-         self.extra_follow) = _abet_search_event(
+        result = cast(
+            tuple[pd.DataFrame, str, str, float, float],
+            _abet_search_event(
             self.abet_pandas, self.time_var_name, self.event_name_col,
             start_event_id=start_event_id,
             start_event_group=start_event_group,
@@ -159,7 +158,12 @@ class SignalEventData:
             extra_follow_time=extra_follow_time,
             exclusion_list=exclusion_list,
             event_alias=event_alias,
-        )
+        ))
+        (self.abet_event_times,
+         self.event_name,
+         self.event_alias,
+         self.extra_prior,
+         self.extra_follow) = result
 
     # -----------------------------------------------------------------------
     # IO – Photometry (Doric)
@@ -190,7 +194,7 @@ class SignalEventData:
     # Signal – crop / utilities
     # -----------------------------------------------------------------------
 
-    def doric_crop(self, start_time_remove=0, end_time_remove=0):
+    def doric_crop(self, start_time_remove: float = 0, end_time_remove: float = 0):
         """Crop leading/trailing time from the photometry recording.
 
         Delegates to :func:`Signal.utilities.crop_signal`.
@@ -381,7 +385,7 @@ def _process_single_file(args):
     (row_dict, event_sheet_path, output_options,
      event_window_prior, event_window_follow,
      trial_start_stage, trial_end_stage,
-     iti_prior_trial, center_z, center_method,
+        iti_prior_trial, center_z, center_method, normalize_side,
      filter_type, filter_name, filter_order, filter_cutoff,
      despike, despike_window, despike_threshold, cheby_ripple,
      fit_type, robust_fit, huber_epsilon,
@@ -469,6 +473,7 @@ def _process_single_file(args):
 
         photometry_data.trial_separator(
             trial_normalize=center_z,
+            normalize_side=normalize_side,
             trial_iti_pad=iti_prior_trial,
             center_method=center_method,
         )
@@ -547,6 +552,10 @@ def process_files(file_sheet_path, event_sheet_path, output_options,
     iti_prior_trial = float(config['Normalization']['iti_prior_trial'])
     center_z        = config['Normalization']['center_z']
     center_method   = config['Normalization']['center_method']
+    normalize_side  = config['Normalization'].get(
+        'normalize_side',
+        'End' if str(center_z).strip().lower() == 'iti' else 'Left',
+    )
 
     filter_type   = config['Signal_Filter']['filter_type']
     filter_name   = config['Signal_Filter']['filter_name']
@@ -577,7 +586,7 @@ def process_files(file_sheet_path, event_sheet_path, output_options,
             row.to_dict(), event_sheet_path, output_options,
             event_window_prior, event_window_follow,
             trial_start_stage, trial_end_stage,
-            iti_prior_trial, center_z, center_method,
+            iti_prior_trial, center_z, center_method, normalize_side,
             filter_type, filter_name, filter_order, filter_cutoff,
             despike, despike_window, despike_threshold, cheby_ripple,
             fit_type, robust_fit, huber_epsilon,

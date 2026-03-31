@@ -43,7 +43,7 @@ def despike_signal(sig_array, window=2001, threshold=5.0):
     return cleaned
 
 
-def crop_signal(signal_pd, start_time_remove=0, end_time_remove=0):
+def crop_signal(signal_pd, start_time_remove: float = 0, end_time_remove: float = 0):
     """Crop leading and/or trailing time from a signal DataFrame.
 
     The function always removes rows with negative time values (pre-sync

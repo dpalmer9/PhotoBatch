@@ -5,8 +5,9 @@
         "event_follow": 5.0
     },
     "Normalization": {
-        "iti_prior_trial": 1.0,
+        "iti_prior_trial": 3.0,
         "center_z": "iti",
-        "center_method": "median"
+        "center_method": "median",
+        "normalize_side": "End"
     }
 }

@@ -124,9 +124,10 @@ def extract_trial_data(doric_time_array, doric_deltaf_array,
 # ---------------------------------------------------------------------------
 
 def trial_separator(abet_time_list, trial_definition_times, doric_pd,
-                    sample_frequency, extra_prior=0, extra_follow=0,
+                    sample_frequency, extra_prior: float = 0,
+                    extra_follow: float = 0,
                     trial_normalize='whole', normalize_side='Left',
-                    trial_iti_pad=0, center_method='mean'):
+                    trial_iti_pad: float = 0, center_method='mean'):
     """Extract, normalise, and z-score each peri-event trial.
 
     Parameters
@@ -142,7 +143,9 @@ def trial_separator(abet_time_list, trial_definition_times, doric_pd,
         'iti'   – z-score using an inter-trial-interval baseline.
         'prior' – z-score using the padding period before the event.
     normalize_side : str
-        'Left' / 'Before' for left baseline; 'Right' / 'After' for right.
+        For 'prior', use 'Left' / 'Before' or 'Right' / 'After'.
+        For 'iti', use 'Start', 'End', or 'Center'. 'Left' / 'Before'
+        map to 'End' and 'Right' / 'After' map to 'Start'.
     trial_iti_pad : float  additional ITI padding (seconds).
     center_method : str  'mean' or 'median'.
 
@@ -154,6 +157,9 @@ def trial_separator(abet_time_list, trial_definition_times, doric_pd,
     final_deltaf      : pd.DataFrame   time + delta-F trial columns.
     """
     left_selection_list  = ['Left', 'Before', 'L', 'l', 'left', 'before', 1]
+    iti_end_selection_list = ['End', 'E', 'e', 'end', 'Left', 'Before', 'L', 'l', 'left', 'before', 1]
+    iti_start_selection_list = ['Start', 'S', 's', 'start', 'Right', 'After', 'R', 'r', 'right', 'after', 0]
+    iti_center_selection_list = ['Center', 'C', 'c', 'center', 'Middle', 'middle', 2]
 
     doric_time_array   = doric_pd['Time'].values
     doric_deltaf_array = doric_pd['DeltaF'].values
@@ -197,23 +203,36 @@ def trial_separator(abet_time_list, trial_definition_times, doric_pd,
 
         # --- Normalisation baseline ---
         if trial_normalize == 'iti':
-            if normalize_side in left_selection_list:
-                trial_start_diff = trial_definition_times.loc[:, 'Start_Time'].sub(
-                    abet_time_list.loc[index, 'Start_Time'] + extra_prior)
-                trial_start_diff[trial_start_diff > 0] = np.nan
-                trial_start_index = trial_start_diff.abs().idxmin(skipna=True)
-                trial_start_window = trial_definition_times.iloc[trial_start_index, 0]
-                trial_iti_window   = trial_start_window - float(trial_iti_pad)
-                iti_mask = ((doric_time_array >= trial_iti_window) &
-                            (doric_time_array <= trial_start_window))
-                iti_data = doric_deltaf_array[iti_mask]
+            trial_start_diff = trial_definition_times.loc[:, 'Start_Time'].sub(
+                abet_time_list.loc[index, 'Start_Time'] + extra_prior)
+            trial_start_diff[trial_start_diff > 0] = np.nan
+            trial_start_label = trial_start_diff.abs().idxmin(skipna=True)
+            trial_start_position = trial_definition_times.index.get_indexer([trial_start_label])[0]
+            trial_start_window = float(trial_definition_times.loc[trial_start_label, 'Start_Time'])
+
+            iti_start = float(doric_time_array.min())
+            if trial_start_position > 0:
+                iti_start = float(trial_definition_times.iloc[trial_start_position - 1]['End_Time'])
+            iti_end = trial_start_window
+
+            if iti_end <= iti_start:
+                iti_data = np.array([], dtype=float)
             else:
-                trial_end_index  = trial_definition_times.loc[:, 'End_Time'].sub(
-                    abet_time_list.loc[index, 'End_Time']).abs().idxmin()
-                trial_end_window = trial_definition_times.iloc[trial_end_index, 0]
-                trial_iti_window = trial_end_window + trial_iti_pad
-                iti_mask = ((doric_time_array >= trial_end_window) &
-                            (doric_time_array <= trial_iti_window))
+                iti_window = float(trial_iti_pad)
+                if normalize_side in iti_start_selection_list:
+                    baseline_start = iti_start
+                    baseline_end = min(iti_end, iti_start + iti_window)
+                elif normalize_side in iti_center_selection_list:
+                    iti_center = (iti_start + iti_end) / 2.0
+                    half_window = iti_window / 2.0
+                    baseline_start = max(iti_start, iti_center - half_window)
+                    baseline_end = min(iti_end, iti_center + half_window)
+                else:
+                    baseline_start = max(iti_start, iti_end - iti_window)
+                    baseline_end = iti_end
+
+                iti_mask = ((doric_time_array >= baseline_start) &
+                            (doric_time_array <= baseline_end))
                 iti_data = doric_deltaf_array[iti_mask]
 
             if center_method == 'mean':
