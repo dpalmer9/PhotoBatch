@@ -320,7 +320,7 @@ def abet_search_event(abet_pd, time_var_name, event_name_col,
                       start_event_item_name='', start_event_position=None,
                       filter_event=False, filter_list=None,
                       extra_prior_time=0, extra_follow_time=0,
-                      exclusion_list=None, event_alias=''):
+                      exclusion_list=None, event_alias='', return_center_time=False):
     """Search ABET data for a specific event and apply optional filters.
 
     Parameters
@@ -348,10 +348,13 @@ def abet_search_event(abet_pd, time_var_name, event_name_col,
     exclusion_list : list, optional
     event_alias : str
         Display label; defaults to *start_event_item_name*.
+    return_center_time : bool
+        If True, return the center time of the event instead of start and end times.
 
     Returns
     -------
-    abet_event_times : pd.DataFrame  columns=['Start_Time', 'End_Time']
+    abet_event_times : pd.DataFrame  columns=['Start_Time', 'End_Time'] - If return_center_time=False
+    abet_event_times : pd.Series  If return_center_time=True
     event_name : str
     event_alias : str
     extra_prior : float
@@ -394,7 +397,10 @@ def abet_search_event(abet_pd, time_var_name, event_name_col,
     abet_end_times   = event_times + extra_follow_time
     abet_event_times = pd.concat([abet_start_times, abet_end_times], axis=1)
     abet_event_times.columns = ['Start_Time', 'End_Time']
-    print(abet_event_times)
+
+    if return_center_time:
+        # Return original event_times as abet_event_times (centered event time)
+        abet_event_times = event_times
 
     resolved_alias = event_alias if event_alias else start_event_item_name
 
