@@ -3,6 +3,7 @@ from numbers import Integral, Real
 from typing import Any, cast
 from dtw import dtw
 import statsmodels.formula.api as smf
+from scipy.interpolate import interp1d
 import numpy as np
 import pandas as pd
 
@@ -29,15 +30,9 @@ def extract_whole_trial_data(signal_df,trial_window_df):
     
     # Start efficient loop of trial_window_df using vectorized operations
     trial_signal_list = []
-    for _, row in trial_window_df.iterrows():
-        start_time = row['start_time']
-        end_time = row['end_time']
-        
-        # Use boolean indexing to extract the relevant signal data for the current trial
-        trial_signal = signal_df[(signal_df['time'] >= start_time) & (signal_df['time'] <= end_time)].copy()
-        
-        # Append the trial signal DataFrame to the list
-        trial_signal_list.append(trial_signal)
+    for row in trial_window_df.itertuples(index=False):
+        mask = (signal_df['time'] >= row.start_time) & (signal_df['time'] <= row.end_time)
+        trial_signal_list.append(signal_df[mask].copy())
     
     return trial_signal_list
 
@@ -487,39 +482,82 @@ def time_warp_trial_data(trial_signal_list, time_warp_method='dtw'):
     else:
         raise ValueError("time_warp_method must be either 'dtw' or 'rtw'.")
     
+# Hybrid Whole Trial - Event Mapping with Piecewise Linear Time Warping with Landmark Alignment
+
+def piecewise_linear_time_warp(trial_df, signal_col, behavioral_timestamps, target_bins=[50,50]):
+
+    """
+    Aligns neural data between behavioral landmarks to a fixed number of bins.
+    
+    Parameters:
+    trial_df (pd.DataFrame): DataFrame for a single trial.
+    signal_col (str): The neural signal to interpolate.
+    behavioral_timestamps (list): [t_cue, t_response, t_reward]
+    target_bins (list): Number of bins to allocate between each landmark.
+    """
+    signal_time = trial_df['time'].to_numpy()
+    signal_vals = trial_df[signal_col].to_numpy()
+    
+    aligned_signal = []
+    
+    # Iterate through the epochs (e.g., Cue->Response, Response->Reward)
+    for i in range(len(behavioral_timestamps) - 1):
+        t_start = behavioral_timestamps[i]
+        t_end = behavioral_timestamps[i+1]
+        
+        # Mask the original data for this epoch
+        mask = (signal_time >= t_start) & (signal_time <= t_end)
+        epoch_t = signal_time[mask]
+        epoch_y = signal_vals[mask]
+        
+        if len(epoch_t) < 2:
+            # Handle edge cases where behavior was too fast for camera/fiber framerate
+            aligned_signal.extend([np.nan] * target_bins[i])
+            continue
+            
+        # Create interpolation function
+        f_interp = interp1d(epoch_t, epoch_y, kind='linear', bounds_error=False, fill_value="extrapolate")
+        
+        # Generate new normalized time vector for this epoch
+        new_t = np.linspace(t_start, t_end, target_bins[i])
+        aligned_signal.extend(f_interp(new_t))
+        
+    return np.array(aligned_signal)
+    
 # Analysis Functions
 
 # Functional Mixed Linear Model
 
-def calculate_fmlm(trial_signal_list, formula, group_column):
+def calculate_spline_fmlm(trial_signal_list, group_column, degrees_of_freedom=5):
     """
     Calculate a functional mixed linear model (FMLM) on the trial data. The trial_signal_list contains a series of trial DataFrames.
     The dataframes will already be normalised and time warped, so the FMLM will be calculated across the aligned time axis. 
-    The formula parameter specifies the fixed and random effects for the FMLM using a Patsy formula string. 
+    The data with be fitted with a mixed model using b-splines to capture non-linear trajectories. 
     The group_column parameter specifies the column in the trial DataFrames that identifies the grouping variable for 
     random effects (e.g., subject ID).
 
     Parameters:
     trial_signal_list (list): List of trial DataFrames. Each DataFrame must contain a 'time' column and
         at least one additional numeric signal column.
-    formula (str): A Patsy formula string specifying the fixed and random effects for the FMLM.
     group_column (str): The name of the column in the trial DataFrames that identifies the grouping variable for random effects.
+    degrees_of_freedom (int): The degrees of freedom for the b-spline basis used to model non-linear trajectories.
 
     Returns:
     fmlm_results: The fitted FMLM results object containing parameter estimates and statistics.
     """
     
     trial_signal_list = _validate_trial_signal_list(trial_signal_list)
-
-    formula_key = str(formula).strip()
-    if not formula_key:
-        raise ValueError('formula must be a non-empty string.')
     
     group_key = str(group_column).strip()
     if not group_key:
         raise ValueError('group_column must be a non-empty string.')
 
     model_data = pd.concat(trial_signal_list, ignore_index=True)
+    # Separate out signal data (always the second column)
+    signal_col = model_data.columns[1]
+
+    # Formula for non-linear function using B-splines
+    formula = f"{signal_col} ~ bs(time, df={degrees_of_freedom})"
     if group_key not in model_data.columns:
         raise ValueError(
             f"group_column '{group_key}' was not found in the trial DataFrames."
@@ -527,10 +565,10 @@ def calculate_fmlm(trial_signal_list, formula, group_column):
     if model_data[group_key].isna().any():
         raise ValueError(f"group_column '{group_key}' contains missing values.")
     if model_data[group_key].nunique(dropna=False) < 2:
-        raise ValueError('calculate_fmlm requires at least two groups.')
+        raise ValueError('calculate_spline_fmlm requires at least two groups.')
     
     model = smf.mixedlm(
-        formula=formula_key,
+        formula=formula,
         data=model_data,
         groups=model_data[group_key],
         re_formula='~time',
