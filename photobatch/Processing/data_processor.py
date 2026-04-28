@@ -243,7 +243,7 @@ class SignalEventData:
     # -----------------------------------------------------------------------
 
     def signal_fit(self, fit_type, filtered_f0, filtered_f, time_data=None,
-                   robust_fit=True, arpls_lambda=1e5, arpls_max_iter=50,
+                   robust_fit=True, baseline_detrend=None, arpls_lambda=1e5, arpls_max_iter=50,
                    arpls_tol=1e-6, arpls_eps=1e-8, arpls_weight_scale=2.0,
                    huber_epsilon='auto'):
         """Fit the baseline and compute delta-F/F.
@@ -259,6 +259,7 @@ class SignalEventData:
         self.doric_pd = _signal_fit(
             fit_type, filtered_f0, filtered_f, time_data,
             robust_fit=robust_fit,
+            baseline_detrend=baseline_detrend,
             arpls_lambda=arpls_lambda,
             arpls_max_iter=arpls_max_iter,
             arpls_tol=arpls_tol,
@@ -288,7 +289,8 @@ class SignalEventData:
     def trial_separator(self, trial_normalize='whole',
                         normalize_side='Left',
                         trial_iti_pad=0,
-                        center_method='mean'):
+                        center_method='mean',
+                        scale_median=False):
         """Build per-trial z-score and delta-F DataFrames."""
         if not self.abet_loaded:
             return
@@ -307,6 +309,7 @@ class SignalEventData:
             normalize_side=normalize_side,
             trial_iti_pad=trial_iti_pad,
             center_method=center_method,
+            scale_median=scale_median,
         )
 
     # -----------------------------------------------------------------------
@@ -385,10 +388,10 @@ def _process_single_file(args):
     (row_dict, event_sheet_path, output_options,
      event_window_prior, event_window_follow,
      trial_start_stage, trial_end_stage,
-        iti_prior_trial, center_z, center_method, normalize_side,
+        iti_prior_trial, center_z, center_method, scale_median, normalize_side,
      filter_type, filter_name, filter_order, filter_cutoff,
      despike, despike_window, despike_threshold, cheby_ripple,
-     fit_type, robust_fit, huber_epsilon,
+     fit_type, baseline_detrend, robust_fit, huber_epsilon,
      arpls_lambda, arpls_max_iter, arpls_tol, arpls_eps, arpls_weight_scale,
      exclusion_list, crop_start, crop_end) = args
 
@@ -419,6 +422,7 @@ def _process_single_file(args):
     )
     photometry_data.signal_fit(
         fit_type, filtered_f0, filtered_f, time_data,
+        baseline_detrend=None,
         robust_fit=robust_fit,
         huber_epsilon=huber_epsilon,
         arpls_lambda=arpls_lambda,
@@ -476,6 +480,7 @@ def _process_single_file(args):
             normalize_side=normalize_side,
             trial_iti_pad=iti_prior_trial,
             center_method=center_method,
+            scale_median=scale_median,
         )
 
         for output in output_options:
@@ -552,6 +557,7 @@ def process_files(file_sheet_path, event_sheet_path, output_options,
     iti_prior_trial = float(config['Normalization']['iti_prior_trial'])
     center_z        = config['Normalization']['center_z']
     center_method   = config['Normalization']['center_method']
+    scale_median    = bool(config['Normalization'].get('scale_median', False))
     normalize_side  = config['Normalization'].get(
         'normalize_side',
         'End' if str(center_z).strip().lower() == 'iti' else 'Left',
@@ -561,7 +567,6 @@ def process_files(file_sheet_path, event_sheet_path, output_options,
     filter_name   = config['Signal_Filter']['filter_name']
     filter_order  = int(config['Signal_Filter']['filter_order'])
     filter_cutoff = int(config['Signal_Filter']['filter_cutoff'])
-
     cheby_ripple      = float(config['Signal_Filter'].get('cheby_ripple', 1.0))
     despike           = bool(config['Signal_Utilities'].get('despike', True))
     despike_window    = int(config['Signal_Utilities'].get('despike_window', 2001))
@@ -569,6 +574,7 @@ def process_files(file_sheet_path, event_sheet_path, output_options,
     crop_start        = float(config['Signal_Utilities'].get('crop_start', 0.0))
     crop_end          = float(config['Signal_Utilities'].get('crop_end', 0.0))
     fit_type          = config['Signal_Fitting']['fit_type']
+    baseline_detrend = config['Signal_Fitting'].get('baseline_detrend', None)
     robust_fit        = bool(config['Signal_Fitting'].get('robust_fit', True))
     huber_epsilon     = config['Signal_Fitting'].get('huber_epsilon', 'auto')
     arpls_lambda      = float(config['Signal_Fitting'].get('arpls_lambda', 1e5))
@@ -586,10 +592,10 @@ def process_files(file_sheet_path, event_sheet_path, output_options,
             row.to_dict(), event_sheet_path, output_options,
             event_window_prior, event_window_follow,
             trial_start_stage, trial_end_stage,
-            iti_prior_trial, center_z, center_method, normalize_side,
+            iti_prior_trial, center_z, center_method, scale_median, normalize_side,
             filter_type, filter_name, filter_order, filter_cutoff,
             despike, despike_window, despike_threshold, cheby_ripple,
-            fit_type, robust_fit, huber_epsilon,
+            fit_type, baseline_detrend, robust_fit, huber_epsilon,
             arpls_lambda, arpls_max_iter, arpls_tol, arpls_eps, arpls_weight_scale,
             exclusion_list, crop_start, crop_end,
         )

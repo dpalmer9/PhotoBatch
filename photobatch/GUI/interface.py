@@ -127,7 +127,7 @@ class PhotometryPreviewWindow(QDialog):
         controls_form.addRow(self._despike_threshold_label, self.despike_threshold)
         
         self.fit_type = QComboBox()
-        self.fit_type.addItems(['linear', 'expodecay', 'arpls'])
+        self.fit_type.addItems(['linear', 'expodecay'])
         self.fit_type.setCurrentText(self.config['Signal_Fitting'].get('fit_type', 'linear'))
         controls_form.addRow("Fit Type:", self.fit_type)
         
@@ -2153,6 +2153,7 @@ class FiberPhotometryApp(QMainWindow):
             group_box = QGroupBox(section.replace("_", " "))
             group_layout = QFormLayout()
             fit_type_combo = None
+            baseline_combo = None
             arpls_widgets = []
             robust_fit_widgets = []
             despike_param_widgets = []
@@ -2164,14 +2165,23 @@ class FiberPhotometryApp(QMainWindow):
                     value = self.config[section][key]
                     display_key = key.replace("_", " ")
                     fit_type_combo = QComboBox()
-                    fit_type_combo.addItems(['linear', 'expodecay', 'arpls'])
+                    fit_type_combo.addItems(['linear', 'expodecay'])
                     fit_type_combo.setCurrentText(str(value) if value is not None else 'linear')
                     group_layout.addRow(display_key, fit_type_combo)
                     setattr(self, f"{section}_fit_type_combobox", fit_type_combo)
+                
+                if key == 'baseline_detrend':
+                    value = self.config[section][key]
+                    display_key = key.replace("_", " ")
+                    baseline_combo = QComboBox()
+                    baseline_combo.addItems(['none', 'arpls'])
+                    baseline_combo.setCurrentText(str(value) if value is not None else 'none')
+                    group_layout.addRow(display_key, baseline_combo)
+                    setattr(self, f"{section}_baseline_detrend_combobox", baseline_combo)
 
             # Second pass: all other keys
             for key in self.config[section]:
-                if key == 'fit_type':
+                if key in ('fit_type', 'baseline_detrend'):
                     continue
                 value = self.config[section][key]
                 # Normalise to string for display/comparison helpers; None becomes ''
@@ -2245,6 +2255,12 @@ class FiberPhotometryApp(QMainWindow):
                     combo.setCurrentText(value_str or 'mean')
                     group_layout.addRow(display_key, combo)
                     setattr(self, f"{widget_attr_base}_combobox", combo)
+
+                elif key == 'scale_median':
+                    checkbox = QCheckBox()
+                    checkbox.setChecked(value_str.lower() in ['true', '1', 'yes'])
+                    group_layout.addRow(display_key, checkbox)
+                    setattr(self, f"{widget_attr_base}_checkbox", checkbox)
 
                 elif key == 'normalize_side':
                     combo = QComboBox()
@@ -2434,14 +2450,14 @@ class FiberPhotometryApp(QMainWindow):
                     group_layout.addRow(display_key, line_edit)
 
             # Connect arpls_ widget visibility to fit_type (only shown for arpls)
-            if fit_type_combo and arpls_widgets:
-                def update_arpls_visibility(ftc=fit_type_combo, widgets=list(arpls_widgets)):
+            if baseline_combo and arpls_widgets:
+                def update_arpls_visibility(ftc=baseline_combo, widgets=list(arpls_widgets)):
                     is_arpls = ftc.currentText() == 'arpls'
                     for lbl, w in widgets:
                         lbl.setVisible(is_arpls)
                         w.setVisible(is_arpls)
-                fit_type_combo.currentTextChanged.connect(
-                    lambda _, ftc=fit_type_combo, widgets=list(arpls_widgets): update_arpls_visibility(ftc, widgets))
+                baseline_combo.currentTextChanged.connect(
+                    lambda _, ftc=baseline_combo, widgets=list(arpls_widgets): update_arpls_visibility(ftc, widgets))
                 update_arpls_visibility()
 
             # Connect robust_fit visibility to fit_type (only shown when linear)
