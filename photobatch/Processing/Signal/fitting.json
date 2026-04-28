@@ -2,6 +2,7 @@
     "_description": "Signal baseline-fitting configuration. Co-located with Processing/Signal/fitting.py.",
     "Signal_Fitting": {
         "fit_type": "linear",
+        "baseline_detrend": "none",
         "robust_fit": true,
         "huber_epsilon": "auto",
         "fit_between_channels": true,
