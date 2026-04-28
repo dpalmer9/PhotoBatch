@@ -127,7 +127,8 @@ def trial_separator(abet_time_list, trial_definition_times, doric_pd,
                     sample_frequency, extra_prior: float = 0,
                     extra_follow: float = 0,
                     trial_normalize='whole', normalize_side='Left',
-                    trial_iti_pad: float = 0, center_method='mean'):
+                    trial_iti_pad: float = 0, center_method='mean',
+                    scale_median: bool = False):
     """Extract, normalise, and z-score each peri-event trial.
 
     Parameters
@@ -148,6 +149,7 @@ def trial_separator(abet_time_list, trial_definition_times, doric_pd,
         map to 'End' and 'Right' / 'After' map to 'Start'.
     trial_iti_pad : float  additional ITI padding (seconds).
     center_method : str  'mean' or 'median'.
+    scale_median: bool if True, scale MAD by 1.4826 to match std dev for normal distribution.
 
     Returns
     -------
@@ -203,37 +205,44 @@ def trial_separator(abet_time_list, trial_definition_times, doric_pd,
 
         # --- Normalisation baseline ---
         if trial_normalize == 'iti':
-            trial_start_diff = trial_definition_times.loc[:, 'Start_Time'].sub(
-                abet_time_list.loc[index, 'Start_Time'] + extra_prior)
-            trial_start_diff[trial_start_diff > 0] = np.nan
-            trial_start_label = trial_start_diff.abs().idxmin(skipna=True)
-            trial_start_position = trial_definition_times.index.get_indexer([trial_start_label])[0]
-            trial_start_window = float(trial_definition_times.loc[trial_start_label, 'Start_Time'])
+            trial_start = abet_time_list.loc[index, 'Start_Time'] + extra_prior
 
-            iti_start = float(doric_time_array.min())
-            if trial_start_position > 0:
-                iti_start = float(trial_definition_times.iloc[trial_start_position - 1]['End_Time'])
+            def_starts = trial_definition_times['Start_Time'].values
+            closest_idx = np.searchsorted(def_starts, trial_start) - 1
+
+            if closest_idx >= 0:
+                trial_start_window = def_starts[closest_idx]
+                if closest_idx > 0:
+                    iti_start = trial_definition_times['End_Time'].values[closest_idx - 1]
+                else:
+                    iti_start = float(doric_time_array[0])  # Start of data if no previous trial
+            else:
+                iti_start = float(doric_time_array[0])  # Start of data if no previous trial
+                trial_start_window = trial_start  # No trial window, use trial start as reference
+
             iti_end = trial_start_window
 
             if iti_end <= iti_start:
                 iti_data = np.array([], dtype=float)
+
             else:
                 iti_window = float(trial_iti_pad)
                 if normalize_side in iti_start_selection_list:
                     baseline_start = iti_start
-                    baseline_end = min(iti_end, iti_start + iti_window)
+                    baseline_end = min(iti_start + iti_window, iti_end)
                 elif normalize_side in iti_center_selection_list:
                     iti_center = (iti_start + iti_end) / 2.0
                     half_window = iti_window / 2.0
-                    baseline_start = max(iti_start, iti_center - half_window)
-                    baseline_end = min(iti_end, iti_center + half_window)
+                    baseline_start = max(iti_center - half_window, iti_start)
+                    baseline_end = min(iti_center + half_window, iti_end)
                 else:
-                    baseline_start = max(iti_start, iti_end - iti_window)
+                    baseline_start = max(iti_end - iti_window, iti_start)
                     baseline_end = iti_end
+            
+            idx_start = np.searchsorted(doric_time_array, baseline_start, side='left')
+            idx_end   = np.searchsorted(doric_time_array, baseline_end, side='right')
+            iti_data = doric_deltaf_array[idx_start:idx_end]
 
-                iti_mask = ((doric_time_array >= baseline_start) &
-                            (doric_time_array <= baseline_end))
-                iti_data = doric_deltaf_array[iti_mask]
 
             if center_method == 'mean':
                 z_mean = iti_data.mean() if len(iti_data) > 0 else 0
@@ -241,6 +250,8 @@ def trial_separator(abet_time_list, trial_definition_times, doric_pd,
             else:  # median
                 z_mean = np.median(iti_data) if len(iti_data) > 0 else 0
                 z_sd   = np.median(np.abs(iti_data - z_mean)) if len(iti_data) > 0 else 1
+                if scale_median and z_sd != 0:
+                    z_sd *= 1.4826  # Scale MAD to match std dev for normal distribution
 
         elif trial_normalize == 'prior':
             if normalize_side in left_selection_list:
@@ -256,6 +267,8 @@ def trial_separator(abet_time_list, trial_definition_times, doric_pd,
             else:
                 z_mean = np.median(baseline_data) if len(baseline_data) > 0 else 0
                 z_sd   = np.median(np.abs(baseline_data - z_mean)) if len(baseline_data) > 0 else 1
+                if scale_median and z_sd != 0:
+                    z_sd *= 1.4826  # Scale MAD to match std dev for normal distribution
 
         else:  # whole
             if center_method == 'mean':
@@ -264,8 +277,14 @@ def trial_separator(abet_time_list, trial_definition_times, doric_pd,
             else:
                 z_mean = np.median(trial_deltaf) if len(trial_deltaf) > 0 else 0
                 z_sd   = np.median(np.abs(trial_deltaf - z_mean)) if len(trial_deltaf) > 0 else 1
+                if scale_median and z_sd != 0:
+                    z_sd *= 1.4826  # Scale MAD to match std dev for normal distribution
 
-        zscore = (trial_deltaf - z_mean) / z_sd if z_sd != 0 else (trial_deltaf - z_mean)
+        # Handle safely cases where SD is equal to zero
+        if z_sd == 0:
+            zscore =  np.full_like(trial_deltaf, np.nan)
+        else:
+            zscore = (trial_deltaf - z_mean) / z_sd
 
         time_trials.append(trial_time)
         zscore_trials.append(zscore)
@@ -303,15 +322,22 @@ def calculate_max_peak(partial_dataframe):
         return partial_dataframe.max().mean()
     return 0
 
+# Add Check for Numpy trapezoid function
+try:
+    from numpy import trapezoid as trapz
+except ImportError:
+    from numpy import trapz
+
 
 def calculate_auc(partial_dataframe, event_start, event_end):
     """Return the mean area-under-the-curve across all trials."""
     if partial_dataframe is not None and not partial_dataframe.empty:
-        time_series = np.linspace(event_start, event_end,
-                                  num=len(partial_dataframe))
-        auc_values = [
-            np.trapezoid(y=partial_dataframe[col], x=time_series)
-            for col in partial_dataframe.columns
-        ]
+        auc_values = []
+        for col in partial_dataframe.columns:
+            trial_data = partial_dataframe[col].dropna().values
+            if len(trial_data) > 1:
+                time_series = np.linspace(event_start, event_end, len(trial_data))
+                auc = trapz(trial_data, x=time_series)
+                auc_values.append(auc)
         return np.mean(auc_values)
     return 0

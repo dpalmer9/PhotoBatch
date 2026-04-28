@@ -8,6 +8,7 @@
         "iti_prior_trial": 3.0,
         "center_z": "iti",
         "center_method": "median",
-        "normalize_side": "End"
+        "normalize_side": "End",
+        "scale_median": true
     }
 }
