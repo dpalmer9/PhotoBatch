@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 import scipy.sparse as sparse
 from scipy.optimize import curve_fit
-from scipy.sparse.linalg import cg, spilu, LinearOperator
+from scipy.sparse.linalg import cg, spilu, LinearOperator, spsolve
 from sklearn.linear_model import HuberRegressor
 
 def _linear_fit(filtered_f0, filtered_f, robust_fit=True, huber_epsilon='auto'):
@@ -51,7 +51,6 @@ def _linear_fit(filtered_f0, filtered_f, robust_fit=True, huber_epsilon='auto'):
 
 def _exp_decay_fit(filtered_f0, filtered_f, time_data):
     yf = filtered_f
-    f0_aligned = _linear_fit(filtered_f0, filtered_f, robust_fit=True, huber_epsilon='auto')
     t = time_data.astype(float)
     try:
         p_95 = np.percentile(yf, 95)
@@ -88,16 +87,8 @@ def _arpls_drift_fit(dff_initial, arpls_lambda=1e5, arpls_max_iter=50, arpls_tol
     for i in range(max_iter):
         W = sparse.diags(w, 0)
         C = (W + H).tocsc()
-        try:
-            ilu = spilu(C, fill_factor=2)
-            M   = LinearOperator(C.shape, ilu.solve)
-        except RuntimeError:
-            M = None
-        z, info = cg(C, w * y, x0=z, M=M, atol=1e-8)
-        if info != 0:
-            print(f"arPLS CG solver did not converge at iteration {i} "
-                  f"(info={info})")
-
+        z = spsolve(C, w * y)
+        
         d     = y - z
         d_neg = d[d < 0]
         if d_neg.size == 0:
