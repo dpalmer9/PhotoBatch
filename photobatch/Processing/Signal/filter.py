@@ -64,9 +64,9 @@ def signal_filter(signal_pd, filter_type='lowpass', filter_name='butterworth',
     """
     signal_pd_cut = signal_pd[signal_pd['Time'] >= 0]
 
-    time_data = signal_pd_cut['Time'].to_numpy().astype(float)
-    f0_data   = signal_pd_cut['Control'].to_numpy().astype(float)
-    f_data    = signal_pd_cut['Active'].to_numpy().astype(float)
+    time_data = signal_pd_cut['Time'].to_numpy(dtype=float)
+    f0_data   = signal_pd_cut['Control'].to_numpy(dtype=float)
+    f_data    = signal_pd_cut['Active'].to_numpy(dtype=float)
 
     # --- Optional despiking ---
     if despike:
@@ -81,10 +81,8 @@ def signal_filter(signal_pd, filter_type='lowpass', filter_name='butterworth',
     uniform_time = np.linspace(time_data[0], time_data[-1], num=int(np.round((time_data[-1] - time_data[0]) / median_dt)) + 1)
 
     if len(uniform_time) >= 2:
-        f0_interp = np.interp(uniform_time, time_data, f0_data, left=np.nan, right=np.nan)
-        f_interp  = np.interp(uniform_time, time_data, f_data,  left=np.nan, right=np.nan)
-        f0_data   = f0_interp(uniform_time)
-        f_data    = f_interp(uniform_time)
+        f0_data = np.interp(uniform_time, time_data, f0_data)
+        f_data  = np.interp(uniform_time, time_data, f_data)
         time_data = uniform_time
         print(f"Interpolated to uniform grid: {len(time_data)} samples, "
               f"dt={median_dt:.6f}s")
