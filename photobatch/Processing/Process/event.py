@@ -337,6 +337,11 @@ def calculate_auc(partial_dataframe, event_start, event_end):
             trial_data = partial_dataframe[col].dropna().values
             if len(trial_data) > 1:
                 time_series = np.linspace(event_start, event_end, len(trial_data))
+                # Check for NA values in trial_data and remove them from time_series if present
+                if np.isnan(trial_data).any():
+                    valid_indices = ~np.isnan(trial_data)
+                    trial_data = trial_data[valid_indices]
+                    time_series = time_series[valid_indices]
                 auc = trapz(trial_data, x=time_series)
                 auc_values.append(auc)
         return np.mean(auc_values)
