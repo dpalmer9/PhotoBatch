@@ -78,13 +78,11 @@ def signal_filter(signal_pd, filter_type='lowpass', filter_name='butterworth',
     # --- Resample to uniform time grid ---
     time_diffs = np.diff(time_data)
     median_dt  = np.median(time_diffs)
-    uniform_time = np.arange(time_data[0], time_data[-1], median_dt)
+    uniform_time = np.linspace(time_data[0], time_data[-1], num=int(np.round((time_data[-1] - time_data[0]) / median_dt)) + 1)
 
     if len(uniform_time) >= 2:
-        f0_interp = interp1d(time_data, f0_data, kind='linear',
-                             fill_value='extrapolate')
-        f_interp  = interp1d(time_data, f_data,  kind='linear',
-                             fill_value='extrapolate')
+        f0_interp = np.interp(uniform_time, time_data, f0_data, left=np.nan, right=np.nan)
+        f_interp  = np.interp(uniform_time, time_data, f_data,  left=np.nan, right=np.nan)
         f0_data   = f0_interp(uniform_time)
         f_data    = f_interp(uniform_time)
         time_data = uniform_time
@@ -92,6 +90,17 @@ def signal_filter(signal_pd, filter_type='lowpass', filter_name='butterworth',
               f"dt={median_dt:.6f}s")
 
     sample_frequency = 1.0 / median_dt
+
+    # Check if cutoff frequencies are valid (must be less than Nyquist frequency)
+    nyquist_freq = sample_frequency / 2.0
+    if isinstance(filter_cutoff, (list, tuple, np.ndarray)):
+        if any(fc >= nyquist_freq for fc in filter_cutoff):
+            print(f"Warning: one or more filter_cutoff frequencies ({filter_cutoff} Hz) are above Nyquist frequency "
+                  f"({nyquist_freq:.2f} Hz). Filter may not work as intended.")
+    else:
+        if filter_cutoff >= nyquist_freq:
+            print(f"Warning: filter_cutoff ({filter_cutoff} Hz) is above Nyquist frequency "
+                  f"({nyquist_freq:.2f} Hz). Filter may not work as intended.")
 
     # --- Default: no filter ---
     filtered_f0 = f0_data.copy()
