@@ -26,6 +26,13 @@ def despike_signal(sig_array, window=2001, threshold=5.0):
     np.ndarray
         Cleaned signal array (same shape as *sig_array*).
     """
+    # Check if window is odd; if not, make it odd by adding 1
+    if window % 2 == 0:
+        window += 1
+        print(f"Warning: Despike window size must be odd. Adjusted to {window}.")
+    # Check if window is larger than signal length; if so, return with ValueError
+    if window > len(sig_array):
+        raise ValueError(f"Despike window size ({window}) cannot be larger than signal length ({len(sig_array)}).")
     med = median_filter(sig_array, size=window)
     mad = median_filter(np.abs(sig_array - med), size=window)
 
