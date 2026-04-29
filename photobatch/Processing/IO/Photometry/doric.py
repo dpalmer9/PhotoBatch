@@ -150,11 +150,12 @@ def load_doric_data_h5(filepath, ch1_col, ch2_col, ttl_col, mode=''):
             if ch1_out in key:
                 key_data = doric_dataset[ch1_out]
                 if ch1_in in key_data.keys():
-                    lock_time = np.array(key_data['Time'])
+                    iso_time = np.array(key_data['Time'])
                     iso_data  = np.array(key_data[ch1_in])
             if ch2_out in key:
                 key_data = doric_dataset[ch2_out]
                 if ch2_in in key_data.keys():
+                    act_time = np.array(key_data['Time'])
                     act_data = np.array(key_data[ch2_in])
 
         ttl_time = ttl_data = None
@@ -177,10 +178,11 @@ def load_doric_data_h5(filepath, ch1_col, ch2_col, ttl_col, mode=''):
         for key in dataset_keys:
             if ch1_in in key and ch1_out in key:
                 iso_dataset = doric_dataset[key]
-                lock_time   = np.array(iso_dataset['Time'])
+                iso_time   = np.array(iso_dataset['Time'])
                 iso_data    = np.array(iso_dataset['Values'])
             if ch2_in in key and ch2_out in key:
                 act_dataset = doric_dataset[key]
+                act_time = np.array(act_dataset['Time'])
                 act_data    = np.array(act_dataset['Values'])
 
         ttl_time = ttl_data = None
@@ -197,8 +199,14 @@ def load_doric_data_h5(filepath, ch1_col, ch2_col, ttl_col, mode=''):
     else:
         print(f'Unrecognised Doric software version: {software_version}')
         return None, None
+    
+    # Calculate Adjusted Time based on iso_time and act_time to ensure it covers the full range of both
+    if iso_time is not None and act_time is not None:
+        min_time = min(iso_time.min(), act_time.min())
+        max_time = max(iso_time.max(), act_time.max())
+        adj_time = np.linspace(min_time, max_time, num=max(len(iso_time), len(act_time)))
 
-    doric_pd = pd.DataFrame({'Time': lock_time, 'Control': iso_data,
+    doric_pd = pd.DataFrame({'Time': adj_time, 'Iso_Time': iso_time, 'Control': iso_data, 'Active_Time': act_time,
                              'Active': act_data}).astype('float')
     ttl_pd   = pd.DataFrame({'Time': ttl_time, 'TTL': ttl_data}).astype('float')
     print(act_data)

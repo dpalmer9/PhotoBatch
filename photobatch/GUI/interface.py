@@ -309,9 +309,9 @@ class PhotometryPreviewWindow(QDialog):
             # Plot Raw
             self.raw_canvas.axes.clear()
             if not photometry_data.doric_pandas.empty:
-                time_raw = photometry_data.doric_pandas['Time']
-                self.raw_canvas.axes.plot(time_raw, photometry_data.doric_pandas['Control'], label='Control (Isobestic)', alpha=0.7)
-                self.raw_canvas.axes.plot(time_raw, photometry_data.doric_pandas['Active'], label='Active', alpha=0.7)
+                time_data = photometry_data.doric_pandas['Time']
+                self.raw_canvas.axes.plot(time_data, photometry_data.doric_pandas['Control'], label='Control (Isobestic)', alpha=0.7)
+                self.raw_canvas.axes.plot(time_data, photometry_data.doric_pandas['Active'], label='Active', alpha=0.7)
                 self.raw_canvas.axes.legend()
                 self.raw_canvas.axes.set_xlabel('Time (s)')
                 self.raw_canvas.axes.set_ylabel('Fluorescence')
@@ -389,9 +389,9 @@ class PhotometryPreviewWindow(QDialog):
             # Plot Fitted
             self.fitted_canvas.axes.clear()
             if not photometry_data.doric_pd.empty:
-                time_fit = photometry_data.doric_pd['Time']
+                time_data = photometry_data.doric_pd['Time']
                 deltaf = photometry_data.doric_pd['DeltaF']
-                self.fitted_canvas.axes.plot(time_fit, deltaf, color='green', label='Delta F/F')
+                self.fitted_canvas.axes.plot(time_data, deltaf, color='green', label='Delta F/F')
                 self.fitted_canvas.axes.legend()
                 self.fitted_canvas.axes.set_xlabel('Time (s)')
                 self.fitted_canvas.axes.set_ylabel('Delta F/F')

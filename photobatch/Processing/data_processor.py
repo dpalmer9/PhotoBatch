@@ -253,7 +253,9 @@ class SignalEventData:
         memory.
         """
         if time_data is None:
-            doric_pandas_cut = self.doric_pandas[self.doric_pandas['Time'] >= 0]
+            # Cut based on Iso_Time and Active_Time to ensure we keep all valid samples even if they don't perfectly overlap
+            doric_pandas_cut = self.doric_pandas[(self.doric_pandas['Time'] >= 0) ]
+            # Calculate a time data based on both Iso_Time and Active_Time to ensure it covers the full range of both
             time_data = doric_pandas_cut['Time'].to_numpy().astype(float)
 
         self.doric_pd = _signal_fit(
