@@ -224,7 +224,6 @@ def trial_separator(abet_time_list, trial_definition_times, doric_pd,
 
             if iti_end <= iti_start:
                 iti_data = np.array([], dtype=float)
-
             else:
                 iti_window = float(trial_iti_pad)
                 if normalize_side in iti_start_selection_list:
@@ -239,9 +238,9 @@ def trial_separator(abet_time_list, trial_definition_times, doric_pd,
                     baseline_start = max(iti_end - iti_window, iti_start)
                     baseline_end = iti_end
             
-            idx_start = np.searchsorted(doric_time_array, baseline_start, side='left')
-            idx_end   = np.searchsorted(doric_time_array, baseline_end, side='right')
-            iti_data = doric_deltaf_array[idx_start:idx_end]
+                idx_start = np.searchsorted(doric_time_array, baseline_start, side='left')
+                idx_end   = np.searchsorted(doric_time_array, baseline_end, side='right')
+                iti_data = doric_deltaf_array[idx_start:idx_end]
 
 
             if center_method == 'mean':
