@@ -60,16 +60,16 @@ def load_abet_data(filepath):
             elif row[0] in event_time_colname:
                 header_idx     = i
                 time_var_name  = row[0]
-                event_name_col = row[2]
-                abet_name_list = [row[0], row[1], row[2], row[3], row[5], row[8]]
                 break
 
+    abet_columns = [time_var_name, 'Evnt_ID', 'Evnt_Name', 'Item_Name', 'Group_ID', 'Arg1_Value']
     abet_full_df = pd.read_csv(filepath, skiprows=header_idx, dtype=str)
-    if len(abet_full_df.columns) > 8:
-        abet_pd = abet_full_df.iloc[:, [0, 1, 2, 3, 5, 8]].copy()
-        abet_pd.columns = abet_name_list
+    avail_cols = [col for col in abet_columns if col in abet_full_df.columns]
+    if avail_cols:
+        abet_pd = abet_full_df[avail_cols].copy()
+        event_name_col = 'Evnt_Name' if 'Evnt_Name' in abet_pd.columns else ''
     else:
-        abet_pd = pd.DataFrame(columns=abet_name_list)
+        abet_pd = pd.DataFrame(columns=abet_columns)
 
     return abet_pd, animal_id, date, time_var_name, event_name_col
 
@@ -178,7 +178,7 @@ def abet_trial_definition(abet_pd, time_var_name, start_event_group,
 
 def _filter_event_data(event_data, abet_data, time_var_name, event_name_col,
                        filter_type='', filter_name='', filter_group='',
-                       filter_arg='', filter_before=1, filter_eval='',
+                       filter_arg='', filter_before='True', filter_eval='',
                        exclusion_list=None):
     """Apply a single filter to the set of candidate event times.
 
@@ -226,24 +226,32 @@ def _filter_event_data(event_data, abet_data, time_var_name, event_name_col,
             ~filter_event_abet.isin(exclusion_list)]
         filter_event_abet = filter_event_abet.dropna(subset=['Item_Name'])
 
-        for index, value in event_data.items():
-            sub_values = filter_event_abet.loc[:, time_var_name].astype('float64')
-            sub_values = sub_values.sub(float(value))
-            filter_before = int(float(filter_before))
-            if filter_before == 1:
-                sub_values[sub_values > 0] = np.nan
-            elif filter_before == 0:
-                sub_values[sub_values < 0] = np.nan
-            sub_index = sub_values.abs().idxmin(skipna=True)
-            sub_null  = sub_values.isnull().sum()
-            if sub_null >= sub_values.size:
-                event_data[index] = np.nan
-                continue
-            filter_value = filter_event_abet.loc[sub_index, 'Item_Name']
-            if filter_value != filter_name:
-                event_data[index] = np.nan
+        filter_times = filter_event_abet[time_var_name].astype('float64').values
+        item_names = filter_event_abet['Item_Name'].values
 
-        event_data = event_data.dropna().reset_index(drop=True)
+        # Create Mask for safe mutation
+        keep_mask = pd.Series(False, index=event_data.index)
+        filter_before = int(float(filter_before))
+
+        for index, value in event_data.items():
+            val_float = float(value)
+
+            insert_idx = np.searchsorted(filter_times, val_float)
+
+            best_idx = -1
+            if filter_before == 1:
+                if insert_idx > 0:
+                    best_idx = insert_idx - 1
+            else:
+                if insert_idx < len(filter_times):
+                    best_idx = insert_idx
+
+            if best_idx != -1:
+                filter_value = item_names[best_idx]
+                if filter_value == str(filter_name):
+                    keep_mask[index] = True
+
+        event_data = event_data[keep_mask].reset_index(drop=True)
 
     elif filter_type in variable_event_names:
         filter_event_abet = abet_data.loc[
@@ -253,64 +261,99 @@ def _filter_event_data(event_data, abet_data, time_var_name, event_name_col,
             ~filter_event_abet.isin(exclusion_list)]
         filter_event_abet = filter_event_abet.dropna(subset=['Item_Name'])
 
-        for index, value in event_data.items():
-            sub_values  = filter_event_abet.loc[:, time_var_name].astype('float64')
-            sub_values  = sub_values.sub(float(value))
-            sub_null    = sub_values.isnull().sum()
-            filter_before = int(float(filter_before))
-            if sub_null >= sub_values.size:
-                continue
-            if filter_before == 1:
-                sub_values[sub_values > 0] = np.nan
-            elif filter_before == 0:
-                sub_values[sub_values < 0] = np.nan
-            sub_index    = sub_values.abs().idxmin(skipna=True)
-            filter_value = filter_event_abet.loc[sub_index, 'Arg1_Value']
+        filter_times = filter_event_abet[time_var_name].astype('float64').values
+        arg_values = filter_event_abet['Arg1_Value'].values
 
-            if isinstance(filter_arg, str):
-                filter_arg_test = filter_arg.replace('.', '', 1)
-                if not filter_arg_test.isdigit():
+        keep_mask = pd.Series(False, index=event_data.index)
+        filter_before = int(float(filter_before))
+        # Bool Checks
+        is_dynamic_arg = False
+        dynamic_times = list()
+        dynamic_vals = list()
+        static_arg = filter_arg
+
+        if isinstance(filter_arg, str):
+            if ',' in static_arg:
+                static_arg = static_arg.split(',')
+            else:
+                # Check if numeric
+                arg_test = static_arg.replace('.', '', 1).replace('-', '', 1)
+                if not arg_test.isdigit():
+                    is_dynamic_arg = True
                     filter_val_abet = abet_data.loc[
                         (abet_data[event_name_col] == 'Variable Event') &
-                        (abet_data['Item_Name'] == str(filter_arg)), :]
-                    filter_index = filter_val_abet.index
-                    arg_index    = filter_index.get_indexer([sub_index], method='pad')
-                    print(arg_index[0])
-                    filter_arg = filter_val_abet.loc[
-                        filter_val_abet.index[arg_index[0]], 'Arg1_Value']
+                        (abet_data['Item_Name'] == str(static_arg)), :]
+                    
+                    dynamic_times = filter_val_abet[time_var_name].astype(float).values
+                    dynamic_vals = filter_val_abet['Arg1_Value'].values
 
-            if ',' in str(filter_arg):
-                filter_arg = str(filter_arg).split(',')
+        for index, value in event_data.items():
+            val_float = float(value)
+
+            insert_idx = np.searchsorted(filter_times, val_float)
+            best_idx = -1
+            if filter_before == 1:
+                if insert_idx > 0:
+                    best_idx = insert_idx - 1
+            else:
+                if insert_idx < len(filter_times):
+                    best_idx = insert_idx
+
+            if best_idx != -1:
+                current_val= arg_values[best_idx]
+            else:
+                continue
+
+            current_arg = static_arg
+            if is_dynamic_arg and len(dynamic_times) > 0:
+                dyn_idx = np.searchsorted(dynamic_times, val_float) - 1
+                if dyn_idx >= 0:
+                    current_arg = dynamic_vals[dyn_idx]
+                else:
+                    continue
+
+            def parse_float(v):
+                try:
+                    return float(v)
+                except (ValueError, TypeError):
+                    return None
+                
+            c_val_f = parse_float(current_val)
+            c_arg_f = parse_float(current_arg) if not isinstance(current_arg, list) else None
+
+            keep = False
+            
+            # Check Argument Type
 
             if filter_eval == 'inlist':
-                if filter_value not in filter_arg:
-                    event_data[index] = np.nan
-            if filter_eval == 'notinlist':
-                if filter_value in filter_arg:
-                    event_data[index] = np.nan
-            if filter_eval == '=':
-                if float(filter_value) != float(filter_arg):
-                    event_data[index] = np.nan
-            if filter_eval == '!=':
-                if float(filter_value) == float(filter_arg):
-                    event_data[index] = np.nan
-            if filter_eval == '<':
-                if float(filter_value) >= float(filter_arg):
-                    event_data[index] = np.nan
-            if filter_eval == '<=':
-                if float(filter_value) > float(filter_arg):
-                    event_data[index] = np.nan
-            if filter_eval == '>':
-                if float(filter_value) <= float(filter_arg):
-                    event_data[index] = np.nan
-            if filter_eval == '>=':
-                if float(filter_value) < float(filter_arg):
-                    event_data[index] = np.nan
+                if str(current_val) in current_arg:
+                    keep = True
+            elif filter_eval == 'notinlist':
+                if str(current_val) not in current_arg:
+                    keep = True
+            elif filter_eval == '=' and c_val_f is not None and c_arg_f is not None:
+                if c_val_f == c_arg_f:
+                    keep = True
+            elif filter_eval == '!=' and c_val_f is not None and c_arg_f is not None:
+                if c_val_f != c_arg_f:
+                    keep = True
+            elif filter_eval == '<' and c_val_f is not None and c_arg_f is not None:
+                if c_val_f < c_arg_f:
+                    keep = True
+            elif filter_eval == '<=' and c_val_f is not None and c_arg_f is not None:
+                if c_val_f <= c_arg_f:
+                    keep = True
+            elif filter_eval == '>' and c_val_f is not None and c_arg_f is not None:
+                if c_val_f > c_arg_f:
+                    keep = True
+            elif filter_eval == '>=' and c_val_f is not None and c_arg_f is not None:
+                if c_val_f >= c_arg_f:
+                    keep = True
 
-        event_data = event_data.dropna().reset_index(drop=True)
-
-    elif filter_type in display_event_names:
-        return event_data
+            if keep:
+                keep_mask[index] = True
+        
+        event_data = event_data[keep_mask].reset_index(drop=True)
 
     return event_data
 
