@@ -18,6 +18,8 @@ import logging
 import numpy as np
 import pandas as pd
 
+from photobatch.exceptions import MissingColumnError
+
 logger = logging.getLogger(__name__)
 
 
@@ -65,6 +67,11 @@ def load_abet_data(filepath):
                 time_var_name  = row[0]
                 break
 
+    if not time_var_name:
+        raise MissingColumnError(
+            f"Could not find a time column ('Evnt_Time' or 'Event_Time') in ABET file: {filepath}"
+        )
+
     abet_columns = [time_var_name, 'Evnt_ID', 'Evnt_Name', 'Item_Name', 'Group_ID', 'Arg1_Value']
     abet_full_df = pd.read_csv(filepath, skiprows=header_idx, dtype=str)
     avail_cols = [col for col in abet_columns if col in abet_full_df.columns]
@@ -73,6 +80,21 @@ def load_abet_data(filepath):
         event_name_col = 'Evnt_Name' if 'Evnt_Name' in abet_pd.columns else ''
     else:
         abet_pd = pd.DataFrame(columns=abet_columns)
+
+    if abet_pd.empty:
+        raise MissingColumnError(
+            f"ABET file loaded as empty DataFrame (no data rows found): {filepath}"
+        )
+    if time_var_name not in abet_pd.columns:
+        raise MissingColumnError(
+            f"Time column '{time_var_name}' missing from loaded ABET data: {filepath}"
+        )
+
+    numeric_times = pd.to_numeric(abet_pd[time_var_name], errors='coerce')
+    if numeric_times.isna().all():
+        raise MissingColumnError(
+            f"Time column '{time_var_name}' contains no valid numeric values in: {filepath}"
+        )
 
     return abet_pd, animal_id, date, time_var_name, event_name_col
 

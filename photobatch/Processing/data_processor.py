@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 # Sub-package imports
-from photobatch.exceptions import PhotobatchError, UnsupportedFileFormatError
+from photobatch.exceptions import PhotobatchError, UnsupportedFileFormatError, MissingColumnError
 from photobatch.Processing.IO import BEHAVIOUR_REGISTRY, SIGNAL_REGISTRY, SYNC_REGISTRY
 from photobatch.Processing.IO.Behaviour.abet import (
     abet_extract_information,
@@ -480,10 +480,25 @@ def _process_single_file(args):
             row.get('abet_path', '?'), row.get('doric_path', '?'), exc,
         )
         return []
+    except MissingColumnError as exc:
+        logger.warning(
+            "Skipping file pair (%s, %s) — validation failed: %s",
+            row.get('abet_path', '?'), row.get('doric_path', '?'), exc,
+        )
+        return []
     except (FileNotFoundError, OSError) as exc:
         logger.error(
             "Cannot open file pair (%s, %s): %s",
             row.get('abet_path', '?'), row.get('doric_path', '?'), exc,
+        )
+        return []
+
+    if not photometry_data.behaviour_loaded or not photometry_data.signal_loaded:
+        logger.warning(
+            "Skipping file pair (%s, %s): data load incomplete "
+            "(behaviour_loaded=%s, signal_loaded=%s)",
+            row.get('abet_path', '?'), row.get('doric_path', '?'),
+            photometry_data.behaviour_loaded, photometry_data.signal_loaded,
         )
         return []
 
@@ -522,7 +537,15 @@ def _process_single_file(args):
     except (FileNotFoundError, OSError, IndexError, ValueError):
         animal_id = date = time = datetime_str = None
 
-    event_sheet_df = pd.read_csv(event_sheet_path)
+    try:
+        event_sheet_df = pd.read_csv(event_sheet_path)
+    except (FileNotFoundError, OSError, pd.errors.EmptyDataError) as exc:
+        logger.error(
+            "Cannot read event sheet '%s': %s — skipping file pair (%s, %s)",
+            event_sheet_path, exc,
+            row.get('abet_path', '?'), row.get('doric_path', '?'),
+        )
+        return []
 
     for _, event_row in event_sheet_df.iterrows():
         event_alias = _generate_event_alias(event_row)

@@ -14,7 +14,7 @@ import pandas as pd
 import numpy as np
 import h5py
 import logging
-from photobatch.exceptions import UnsupportedFileFormatError
+from photobatch.exceptions import UnsupportedFileFormatError, MissingColumnError
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,13 @@ def load_doric_data_csv(filepath, ch1_col, ch2_col, ttl_col, mode=''):
 
     if mode == 'col_index':
         doric_data = pd.read_csv(filepath, header=1)
+        n_cols = len(doric_data.columns)
+        for label, idx in [('ch1_col', int(ch1_col)), ('ch2_col', int(ch2_col)), ('ttl_col', int(ttl_col))]:
+            if idx < 0 or idx >= n_cols:
+                raise MissingColumnError(
+                    f"Column index {idx} ({label}) is out of range — "
+                    f"file has {n_cols} columns: {filepath}"
+                )
         doric_pd   = doric_data.iloc[:, [0, int(ch1_col), int(ch2_col)]].copy()
         ttl_pd     = doric_data.iloc[:, [0, int(ttl_col)]].copy()
 
@@ -91,9 +98,27 @@ def load_doric_data_csv(filepath, ch1_col, ch2_col, ttl_col, mode=''):
                         str(int(ch2_col[1]) - 1))
 
         ttl_str      = 'Analog In. | Ch.' + str(ttl_col)
-        iso_col_idx  = doric_cols.index(iso_str)
-        act_col_idx  = doric_cols.index(act_str)
-        ttl_col_idx  = doric_cols.index(ttl_str)
+        try:
+            iso_col_idx = doric_cols.index(iso_str)
+        except ValueError:
+            raise MissingColumnError(
+                f"Expected column '{iso_str}' (ch1/isobestic) not found in {filepath}. "
+                f"Available columns: {doric_cols}"
+            )
+        try:
+            act_col_idx = doric_cols.index(act_str)
+        except ValueError:
+            raise MissingColumnError(
+                f"Expected column '{act_str}' (ch2/active) not found in {filepath}. "
+                f"Available columns: {doric_cols}"
+            )
+        try:
+            ttl_col_idx = doric_cols.index(ttl_str)
+        except ValueError:
+            raise MissingColumnError(
+                f"Expected column '{ttl_str}' (TTL) not found in {filepath}. "
+                f"Available columns: {doric_cols}"
+            )
 
         doric_pd = doric_data.iloc[:, [0, iso_col_idx, act_col_idx]].copy()
         ttl_pd   = doric_data.iloc[:, [0, ttl_col_idx]].copy()
@@ -103,8 +128,16 @@ def load_doric_data_csv(filepath, ch1_col, ch2_col, ttl_col, mode=''):
 
     doric_pd.columns = doric_colnames
     ttl_pd.columns   = ttl_colnames
-    doric_pd = doric_pd.astype('float')
-    ttl_pd   = ttl_pd.astype('float')
+
+    if doric_pd.empty:
+        raise MissingColumnError(f"Doric CSV loaded as empty DataFrame: {filepath}")
+    try:
+        doric_pd = doric_pd.astype('float')
+        ttl_pd   = ttl_pd.astype('float')
+    except (ValueError, TypeError) as exc:
+        raise MissingColumnError(
+            f"Doric CSV contains non-numeric data in signal/TTL columns: {filepath}"
+        ) from exc
 
     return doric_pd, ttl_pd
 
@@ -131,7 +164,10 @@ def load_doric_data_h5(filepath, ch1_col, ch2_col, ttl_col, mode=''):
     ttl_pd   : pd.DataFrame  columns=['Time','TTL']
     or (None, None) if the file version cannot be parsed.
     """
-    doric_h5 = h5py.File(filepath, 'r')
+    try:
+        doric_h5 = h5py.File(filepath, 'r')
+    except OSError as exc:
+        raise OSError(f"Cannot open HDF5 file '{filepath}': {exc}") from exc
 
     try:
         software_version = doric_h5.attrs['SoftwareVersion']
@@ -205,7 +241,20 @@ def load_doric_data_h5(filepath, ch1_col, ch2_col, ttl_col, mode=''):
             f"Unrecognised Doric software version: '{software_version}'. "
             "Supported versions: 6.1.5.0, 6.3.1.0, 6.3.2.0."
         )
-    
+
+    if iso_data is None:
+        raise MissingColumnError(
+            f"Control channel '{ch1_in}/{ch1_out}' not found in HDF5 file: {filepath}"
+        )
+    if act_data is None:
+        raise MissingColumnError(
+            f"Active channel '{ch2_in}/{ch2_out}' not found in HDF5 file: {filepath}"
+        )
+    if ttl_data is None:
+        raise MissingColumnError(
+            f"TTL channel '{ttl_in}' not found in HDF5 file: {filepath}"
+        )
+
     # Calculate Adjusted Time based on iso_time and act_time to ensure it covers the full range of both
     if iso_time is not None and act_time is not None:
         min_time = min(iso_time.min(), act_time.min())
