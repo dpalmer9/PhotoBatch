@@ -11,16 +11,11 @@ import numpy as np
 import pandas as pd
 
 # Sub-package imports
-from photobatch.Processing.IO.Photometry.doric import (
-    load_doric_data as _load_doric_data,
-)
+from photobatch.Processing.IO import BEHAVIOUR_REGISTRY, SIGNAL_REGISTRY, SYNC_REGISTRY
 from photobatch.Processing.IO.Behaviour.abet import (
-    load_abet_data as _load_abet_data,
-    abet_extract_information,
     abet_trial_definition as _abet_trial_definition,
     abet_search_event as _abet_search_event,
 )
-from photobatch.Processing.IO.sync import abet_doric_synchronize as _synchronize
 from photobatch.Processing.IO.output import write_data as _write_data, write_summary as _write_summary
 from photobatch.Processing.Signal.utilities import despike_signal, crop_signal
 from photobatch.Processing.Signal.filter import signal_filter as _signal_filter
@@ -71,10 +66,10 @@ class SignalEventData:
         self.anymaze_file    = ''
 
         # State flags
-        self.abet_loaded     = False
+        self.behaviour_loaded = False
         self.abet_searched   = False
         self.anymaze_loaded  = False
-        self.doric_loaded    = False
+        self.signal_loaded    = False
 
         # Numeric
         self.abet_doric_sync_value   = 0
@@ -106,34 +101,98 @@ class SignalEventData:
         self.final_percent      = pd.DataFrame()
         self.abet_pd            = pd.DataFrame()
         self.doric_pd           = pd.DataFrame()
-        self.doric_pandas       = pd.DataFrame()
+        self.signal_df          = pd.DataFrame()
         self.ttl_pandas         = pd.DataFrame()
         self.abet_raw_data      = pd.DataFrame()
         self.anymaze_pandas     = pd.DataFrame()
-        self.abet_pandas        = pd.DataFrame()
+        self.behaviour_df       = pd.DataFrame()
         self.abet_event_times   = pd.DataFrame()
         self.trial_definition_times = pd.DataFrame()
+
+    # ------------------------------------------------------------------
+    # Backward-compatibility attribute aliases (deprecated names)
+    # ------------------------------------------------------------------
+    @property
+    def abet_loaded(self):
+        return self.behaviour_loaded
+
+    @abet_loaded.setter
+    def abet_loaded(self, value):
+        self.behaviour_loaded = value
+
+    @property
+    def doric_loaded(self):
+        return self.signal_loaded
+
+    @doric_loaded.setter
+    def doric_loaded(self, value):
+        self.signal_loaded = value
+
+    @property
+    def abet_pandas(self):
+        return self.behaviour_df
+
+    @abet_pandas.setter
+    def abet_pandas(self, value):
+        self.behaviour_df = value
+
+    @property
+    def doric_pandas(self):
+        return self.signal_df
+
+    @doric_pandas.setter
+    def doric_pandas(self, value):
+        self.signal_df = value
+
+    # -----------------------------------------------------------------------
+    # IO – generic vendor-dispatched loaders
+    # -----------------------------------------------------------------------
+
+    def load_behaviour_data(self, filepath, vendor='abet'):
+        """Load behaviour data using the specified vendor plugin."""
+        loader = BEHAVIOUR_REGISTRY[vendor]['load']
+        self.abet_file_path = filepath
+        self.behaviour_loaded = True
+        (self.behaviour_df,
+         self.animal_id,
+         self.date,
+         self.time_var_name,
+         self.event_name_col) = loader(filepath)
+
+    def load_signal_data(self, filepath, ch1_col, ch2_col, ttl_col,
+                         mode='', vendor='doric'):
+        """Load signal data using the specified vendor plugin."""
+        loader = SIGNAL_REGISTRY[vendor]['load']
+        self.signal_loaded = True
+        self.doric_file_path = filepath
+        result = loader(filepath, ch1_col, ch2_col, ttl_col, mode)
+        if result is None or result[0] is None:
+            self.signal_loaded = False
+            return
+        self.signal_df, self.ttl_pandas = result
+
+    def synchronize_time(self, behaviour_vendor='abet', signal_vendor='doric'):
+        """Align signal time axis to behaviour time via TTL cross-correlation."""
+        if not self.behaviour_loaded or not self.signal_loaded:
+            return None
+        sync_fn = SYNC_REGISTRY[(behaviour_vendor, signal_vendor)]
+        self.signal_df = sync_fn(
+            self.signal_df, self.ttl_pandas, self.behaviour_df)
 
     # -----------------------------------------------------------------------
     # IO – Behaviour (ABET)
     # -----------------------------------------------------------------------
 
     def load_abet_data(self, filepath):
-        """Load ABET II / ABET Cognition data from *filepath*."""
-        self.abet_file_path = filepath
-        self.abet_loaded    = True
-        (self.abet_pandas,
-         self.animal_id,
-         self.date,
-         self.time_var_name,
-         self.event_name_col) = _load_abet_data(filepath)
+        """Load ABET II / ABET Cognition data from *filepath*. Delegates to load_behaviour_data."""
+        self.load_behaviour_data(filepath, vendor='abet')
 
     def abet_trial_definition(self, start_event_group, end_event_group):
         """Define trial start/end windows from ABET Condition Events."""
-        if not self.abet_loaded:
+        if not self.behaviour_loaded:
             return None
         self.trial_definition_times = _abet_trial_definition(
-            self.abet_pandas, self.time_var_name,
+            self.behaviour_df, self.time_var_name,
             start_event_group, end_event_group)
 
     def abet_search_event(self, start_event_id='1', start_event_group='',
@@ -142,12 +201,12 @@ class SignalEventData:
                           extra_prior_time=0, extra_follow_time=0,
                           exclusion_list=None, event_alias=''):
         """Search ABET data for a specific event with optional filters."""
-        if not self.abet_loaded:
+        if not self.behaviour_loaded:
             return
         result = cast(
             tuple[pd.DataFrame, str, str, float, float],
             _abet_search_event(
-            self.abet_pandas, self.time_var_name, self.event_name_col,
+            self.behaviour_df, self.time_var_name, self.event_name_col,
             start_event_id=start_event_id,
             start_event_group=start_event_group,
             start_event_item_name=start_event_item_name,
@@ -170,25 +229,16 @@ class SignalEventData:
     # -----------------------------------------------------------------------
 
     def load_doric_data(self, filepath, ch1_col, ch2_col, ttl_col, mode=''):
-        """Load Doric photometry data from *filepath* (.csv or .doric)."""
-        self.doric_loaded    = True
-        self.doric_file_path = filepath
-        result = _load_doric_data(filepath, ch1_col, ch2_col, ttl_col, mode)
-        if result is None or result[0] is None:
-            self.doric_loaded = False
-            return
-        self.doric_pandas, self.ttl_pandas = result
+        """Load Doric photometry data from *filepath* (.csv or .doric). Delegates to load_signal_data."""
+        self.load_signal_data(filepath, ch1_col, ch2_col, ttl_col, mode, vendor='doric')
 
     # -----------------------------------------------------------------------
     # IO – Synchronization
     # -----------------------------------------------------------------------
 
     def abet_doric_synchronize(self):
-        """Align Doric time axis to ABET time via TTL cross-correlation."""
-        if not self.abet_loaded or not self.doric_loaded:
-            return None
-        self.doric_pandas = _synchronize(
-            self.doric_pandas, self.ttl_pandas, self.abet_pandas)
+        """Align Doric time axis to ABET time via TTL cross-correlation. Delegates to synchronize_time."""
+        self.synchronize_time(behaviour_vendor='abet', signal_vendor='doric')
 
     # -----------------------------------------------------------------------
     # Signal – crop / utilities
@@ -200,10 +250,10 @@ class SignalEventData:
         Delegates to :func:`Signal.utilities.crop_signal`.
         The method name is kept for backward compatibility.
         """
-        if not self.doric_loaded:
+        if not self.signal_loaded:
             return None
-        self.doric_pandas = crop_signal(
-            self.doric_pandas,
+        self.signal_df = crop_signal(
+            self.signal_df,
             start_time_remove=start_time_remove,
             end_time_remove=end_time_remove)
 
@@ -220,7 +270,7 @@ class SignalEventData:
         Delegates to :func:`Signal.filter.signal_filter`.
         """
         time_data, filtered_f0, filtered_f, sample_frequency = _signal_filter(
-            self.doric_pandas,
+            self.signal_df,
             filter_type=filter_type,
             filter_name=filter_name,
             filter_order=filter_order,
@@ -254,9 +304,9 @@ class SignalEventData:
         """
         if time_data is None:
             # Cut based on Iso_Time and Active_Time to ensure we keep all valid samples even if they don't perfectly overlap
-            doric_pandas_cut = self.doric_pandas[(self.doric_pandas['Time'] >= 0) ]
+            signal_df_cut = self.signal_df[(self.signal_df['Time'] >= 0) ]
             # Calculate a time data based on both Iso_Time and Active_Time to ensure it covers the full range of both
-            time_data = doric_pandas_cut['Time'].to_numpy().astype(float)
+            time_data = signal_df_cut['Time'].to_numpy().astype(float)
 
         self.doric_pd = _signal_fit(
             fit_type, filtered_f0, filtered_f, time_data,
@@ -270,7 +320,7 @@ class SignalEventData:
             huber_epsilon=huber_epsilon,
         )
         # Free raw photometry memory now that delta-F is computed
-        self.doric_pandas = pd.DataFrame()
+        self.signal_df = pd.DataFrame()
         self.ttl_pandas   = pd.DataFrame()
 
     # Backward-compat alias
@@ -294,7 +344,7 @@ class SignalEventData:
                         center_method='mean',
                         scale_median=False):
         """Build per-trial z-score and delta-F DataFrames."""
-        if not self.abet_loaded:
+        if not self.behaviour_loaded:
             return
         self.abet_time_list = self.abet_event_times
         (self.partial_dataframe,
@@ -401,13 +451,13 @@ def _process_single_file(args):
     file_results = []
 
     photometry_data = SignalEventData()
-    photometry_data.load_abet_data(row['abet_path'])
-    photometry_data.load_doric_data(
+    photometry_data.load_behaviour_data(row['abet_path'], vendor='abet')
+    photometry_data.load_signal_data(
         row['doric_path'], row['ctrl_col_num'],
-        row['act_col_num'], row['ttl_col_num'], row['mode'])
+        row['act_col_num'], row['ttl_col_num'], row['mode'], vendor='doric')
 
-    if photometry_data.abet_loaded:
-        photometry_data.abet_doric_synchronize()
+    if photometry_data.behaviour_loaded:
+        photometry_data.synchronize_time(behaviour_vendor='abet', signal_vendor='doric')
 
     photometry_data.doric_crop(
         start_time_remove=crop_start, end_time_remove=crop_end)
@@ -436,8 +486,8 @@ def _process_single_file(args):
     photometry_data.abet_trial_definition(trial_start_stage, trial_end_stage)
 
     try:
-        animal_id, date, time, datetime_str, _ = abet_extract_information(
-            row['abet_path'])
+        extract_info = BEHAVIOUR_REGISTRY['abet']['extract_info']
+        animal_id, date, time, datetime_str, _ = extract_info(row['abet_path'])
     except (FileNotFoundError, OSError, IndexError, ValueError):
         animal_id = date = time = datetime_str = None
 
