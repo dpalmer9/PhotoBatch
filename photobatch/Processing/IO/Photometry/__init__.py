@@ -1,2 +1,9 @@
-# Photometry loader sub-package.
-# Each vendor gets its own module (e.g. doric.py, neurophotometrics.py).
+# Photometry loader sub-package registry.
+
+from .doric import load_doric_data
+
+SIGNAL_REGISTRY = {
+    'doric': {
+        'load': load_doric_data,
+    }
+}

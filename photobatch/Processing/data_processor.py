@@ -76,10 +76,10 @@ class SignalEventData:
         self.anymaze_file    = ''
 
         # State flags
-        self.abet_loaded     = False
+        self.behaviour_loaded = False
         self.abet_searched   = False
         self.anymaze_loaded  = False
-        self.doric_loaded    = False
+        self.signal_loaded    = False
 
         # Numeric
         self.abet_doric_sync_value   = 0
@@ -111,13 +111,48 @@ class SignalEventData:
         self.final_percent      = pd.DataFrame()
         self.abet_pd            = pd.DataFrame()
         self.doric_pd           = pd.DataFrame()
-        self.doric_pandas       = pd.DataFrame()
+        self.signal_df          = pd.DataFrame()
         self.ttl_pandas         = pd.DataFrame()
         self.abet_raw_data      = pd.DataFrame()
         self.anymaze_pandas     = pd.DataFrame()
-        self.abet_pandas        = pd.DataFrame()
+        self.behaviour_df       = pd.DataFrame()
         self.abet_event_times   = pd.DataFrame()
         self.trial_definition_times = pd.DataFrame()
+
+    # ------------------------------------------------------------------
+    # Backward-compatibility attribute aliases (deprecated names)
+    # ------------------------------------------------------------------
+    @property
+    def abet_loaded(self):
+        return self.behaviour_loaded
+
+    @abet_loaded.setter
+    def abet_loaded(self, value):
+        self.behaviour_loaded = value
+
+    @property
+    def doric_loaded(self):
+        return self.signal_loaded
+
+    @doric_loaded.setter
+    def doric_loaded(self, value):
+        self.signal_loaded = value
+
+    @property
+    def abet_pandas(self):
+        return self.behaviour_df
+
+    @abet_pandas.setter
+    def abet_pandas(self, value):
+        self.behaviour_df = value
+
+    @property
+    def doric_pandas(self):
+        return self.signal_df
+
+    @doric_pandas.setter
+    def doric_pandas(self, value):
+        self.signal_df = value
 
     # -----------------------------------------------------------------------
     # IO – generic vendor-dispatched loaders
@@ -172,10 +207,10 @@ class SignalEventData:
 
     def abet_trial_definition(self, start_event_group, end_event_group):
         """Define trial start/end windows from ABET Condition Events."""
-        if not self.abet_loaded:
+        if not self.behaviour_loaded:
             return None
         self.trial_definition_times = _abet_trial_definition(
-            self.abet_pandas, self.time_var_name,
+            self.behaviour_df, self.time_var_name,
             start_event_group, end_event_group)
 
     def abet_search_event(self, start_event_id='1', start_event_group='',
@@ -184,12 +219,12 @@ class SignalEventData:
                           extra_prior_time=0, extra_follow_time=0,
                           exclusion_list=None, event_alias=''):
         """Search ABET data for a specific event with optional filters."""
-        if not self.abet_loaded:
+        if not self.behaviour_loaded:
             return
         result = cast(
             tuple[pd.DataFrame, str, str, float, float],
             _abet_search_event(
-            self.abet_pandas, self.time_var_name, self.event_name_col,
+            self.behaviour_df, self.time_var_name, self.event_name_col,
             start_event_id=start_event_id,
             start_event_group=start_event_group,
             start_event_item_name=start_event_item_name,
@@ -233,10 +268,10 @@ class SignalEventData:
         Delegates to :func:`Signal.utilities.crop_signal`.
         The method name is kept for backward compatibility.
         """
-        if not self.doric_loaded:
+        if not self.signal_loaded:
             return None
-        self.doric_pandas = crop_signal(
-            self.doric_pandas,
+        self.signal_df = crop_signal(
+            self.signal_df,
             start_time_remove=start_time_remove,
             end_time_remove=end_time_remove)
 
@@ -253,7 +288,7 @@ class SignalEventData:
         Delegates to :func:`Signal.filter.signal_filter`.
         """
         time_data, filtered_f0, filtered_f, sample_frequency = _signal_filter(
-            self.doric_pandas,
+            self.signal_df,
             filter_type=filter_type,
             filter_name=filter_name,
             filter_order=filter_order,
@@ -287,9 +322,9 @@ class SignalEventData:
         """
         if time_data is None:
             # Cut based on Iso_Time and Active_Time to ensure we keep all valid samples even if they don't perfectly overlap
-            doric_pandas_cut = self.doric_pandas[(self.doric_pandas['Time'] >= 0) ]
+            signal_df_cut = self.signal_df[(self.signal_df['Time'] >= 0) ]
             # Calculate a time data based on both Iso_Time and Active_Time to ensure it covers the full range of both
-            time_data = doric_pandas_cut['Time'].to_numpy().astype(float)
+            time_data = signal_df_cut['Time'].to_numpy().astype(float)
 
         self.doric_pd = _signal_fit(
             fit_type, filtered_f0, filtered_f, time_data,
@@ -303,7 +338,7 @@ class SignalEventData:
             huber_epsilon=huber_epsilon,
         )
         # Free raw photometry memory now that delta-F is computed
-        self.doric_pandas = pd.DataFrame()
+        self.signal_df = pd.DataFrame()
         self.ttl_pandas   = pd.DataFrame()
 
     # Backward-compat alias
@@ -327,7 +362,7 @@ class SignalEventData:
                         center_method='mean',
                         scale_median=False):
         """Build per-trial z-score and delta-F DataFrames."""
-        if not self.abet_loaded:
+        if not self.behaviour_loaded:
             return
         self.abet_time_list = self.abet_event_times
         (self.partial_dataframe,
