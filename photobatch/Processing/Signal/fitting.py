@@ -25,6 +25,25 @@ from sklearn.linear_model import HuberRegressor
 logger = logging.getLogger(__name__)
 
 def _linear_fit(filtered_f0, filtered_f, robust_fit=True, huber_epsilon='auto'):
+    """Fit the isobestic channel to the active channel using linear regression.
+
+    Parameters
+    ----------
+    filtered_f0 : np.ndarray
+        Filtered isobestic (Control) channel.
+    filtered_f : np.ndarray
+        Filtered active channel to be fitted.
+    robust_fit : bool, optional
+        If True, use sklearn HuberRegressor; otherwise use numpy polyfit (default True).
+    huber_epsilon : str or float, optional
+        Huber loss threshold. 'auto'/'mad' derives it from the residual MAD;
+        a numeric value is used directly (must be > 1.0) (default 'auto').
+
+    Returns
+    -------
+    np.ndarray
+        Fitted values of *filtered_f* predicted from *filtered_f0*.
+    """
     if robust_fit:
         f0_reshaped = filtered_f0.reshape(-1, 1)
 
@@ -53,6 +72,24 @@ def _linear_fit(filtered_f0, filtered_f, robust_fit=True, huber_epsilon='auto'):
     return fitted
 
 def _exp_decay_fit(filtered_f0, filtered_f, time_data):
+    """Fit the active channel using a single-exponential decay over time.
+
+    Falls back to linear polyfit if curve_fit fails to converge.
+
+    Parameters
+    ----------
+    filtered_f0 : np.ndarray
+        Filtered isobestic channel (unused in the fit, kept for API symmetry).
+    filtered_f : np.ndarray
+        Filtered active channel to be fitted.
+    time_data : np.ndarray
+        Time axis (seconds) corresponding to the signal arrays.
+
+    Returns
+    -------
+    np.ndarray
+        Fitted baseline values with the same length as *filtered_f*.
+    """
     yf = filtered_f
     t = time_data.astype(float)
     try:
@@ -72,6 +109,33 @@ def _exp_decay_fit(filtered_f0, filtered_f, time_data):
     return fitted
 
 def _arpls_drift_fit(dff_initial, arpls_lambda=1e5, arpls_max_iter=50, arpls_tol=1e-6, arpls_eps=1e-8, arpls_weight_scale=2.0):
+    """Estimate baseline drift using Asymmetrically Reweighted Penalised Least Squares.
+
+    Implements the arPLS algorithm (Baek et al. 2015). Returns a smooth
+    baseline that hugs the lower envelope of the signal, suitable for
+    removing slow photobleaching drift from delta-F/F traces.
+
+    Parameters
+    ----------
+    dff_initial : np.ndarray
+        Input 1-D signal (delta-F/F) from which drift is to be removed.
+    arpls_lambda : float, optional
+        Smoothness penalty weight (default 1e5). Larger values produce
+        a smoother baseline.
+    arpls_max_iter : int, optional
+        Maximum number of weight-update iterations (default 50).
+    arpls_tol : float, optional
+        Convergence tolerance on the relative weight change (default 1e-6).
+    arpls_eps : float, optional
+        Minimum weight floor to prevent numerical instability (default 1e-8).
+    arpls_weight_scale : float, optional
+        Controls sharpness of the logistic reweighting transition (default 2.0).
+
+    Returns
+    -------
+    np.ndarray
+        Estimated drift baseline with the same shape as *dff_initial*.
+    """
     y  = dff_initial.astype(float)
     n  = y.size
     lam          = float(arpls_lambda)

@@ -29,6 +29,18 @@ def _generate_event_alias(event_row):
     Priority:
     1. Explicit ``event_alias`` column value (non-empty, not NaN).
     2. Auto-generated string: ``event_name [filter1 & filter2 …]``.
+
+    Parameters
+    ----------
+    event_row : pd.Series
+        A single row from the event-sheet DataFrame, containing at minimum
+        ``event_alias``, ``event_name``, ``num_filter``, and per-filter
+        columns ``filter_name``, ``filter_eval``, ``filter_arg``.
+
+    Returns
+    -------
+    str
+        Human-readable label identifying the event and any active filters.
     """
     alias = str(event_row.get('event_alias', '')).strip()
     if alias and alias.lower() not in ('nan', 'none', ''):
@@ -59,6 +71,20 @@ def _create_filter_list(event_row):
     """Build a list of filter dicts from an event-sheet row.
 
     Each dict has keys: Type, Name, Group, Arg, Prior, Eval.
+
+    Parameters
+    ----------
+    event_row : pd.Series
+        A single row from the event-sheet DataFrame. Expected columns are
+        ``num_filter`` (int) and, for each filter index *i*:
+        ``filter_type[i]``, ``filter_name[i]``, ``filter_group[i]``,
+        ``filter_arg[i]``, ``filter_prior[i]``, ``filter_eval[i]``.
+
+    Returns
+    -------
+    list of dict
+        Ordered list of filter specification dicts, each with keys
+        ``Type``, ``Name``, ``Group``, ``Arg``, ``Prior``, ``Eval``.
     """
     num_filters = event_row.get('num_filter', 0)
     filter_list = []
@@ -320,7 +346,20 @@ def trial_separator(abet_time_list, trial_definition_times, doric_pd,
 # ---------------------------------------------------------------------------
 
 def calculate_max_peak(partial_dataframe):
-    """Return the mean of the per-trial maximum z-scores."""
+    """Return the mean of the per-trial maximum z-scores.
+
+    Parameters
+    ----------
+    partial_dataframe : pd.DataFrame or None
+        DataFrame of z-score trials (one column per trial), as returned
+        by :func:`trial_separator`.
+
+    Returns
+    -------
+    float
+        Mean of each trial's maximum z-score value, or 0 if the
+        DataFrame is empty or None.
+    """
     if partial_dataframe is not None and not partial_dataframe.empty:
         return partial_dataframe.max().mean()
     return 0
@@ -333,7 +372,27 @@ except ImportError:
 
 
 def calculate_auc(partial_dataframe, event_start, event_end):
-    """Return the mean area-under-the-curve across all trials."""
+    """Return the mean area-under-the-curve across all trials.
+
+    Uses trapezoidal integration over a linearly-spaced time axis
+    derived from *event_start* and *event_end*.
+
+    Parameters
+    ----------
+    partial_dataframe : pd.DataFrame or None
+        DataFrame of z-score trials (one column per trial), as returned
+        by :func:`trial_separator`.
+    event_start : float
+        Start of the integration window (seconds, typically negative for
+        the pre-event baseline).
+    event_end : float
+        End of the integration window (seconds).
+
+    Returns
+    -------
+    float
+        Mean AUC across all trials, or 0 if no valid data are present.
+    """
     if partial_dataframe is not None and not partial_dataframe.empty:
         auc_values = []
         for col in partial_dataframe.columns:

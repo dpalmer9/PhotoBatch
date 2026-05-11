@@ -15,14 +15,36 @@ _STRING_DTYPE = h5py.string_dtype(encoding="utf-8")
 
 
 def get_project_root() -> Path:
+    """Return the repository root directory as a resolved Path."""
     return Path(__file__).resolve().parents[2]
 
 
 def get_default_results_path() -> Path:
+    """Return the default HDF5 results file path inside the project root."""
     return get_project_root() / DEFAULT_RESULTS_FILENAME
 
 
 def initialize_results_file(hdf5_path: str | Path, metadata: dict | None = None) -> str:
+    """Create (or overwrite) the PhotoBatch HDF5 results store.
+
+    Writes the schema version attribute and empty ``analysis/entries``,
+    ``analysis/index``, and ``combined_results`` groups.  Any key/value
+    pairs in *metadata* are stored as attributes on the ``meta`` group.
+
+    Parameters
+    ----------
+    hdf5_path : str or Path
+        Destination path for the HDF5 file.  Parent directories are
+        created automatically.
+    metadata : dict, optional
+        Scalar metadata to persist (e.g. file sheet path, event prior/
+        follow windows, serialised config JSON).
+
+    Returns
+    -------
+    str
+        Absolute string path to the created file.
+    """
     path = Path(hdf5_path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -50,6 +72,22 @@ def initialize_results_file(hdf5_path: str | Path, metadata: dict | None = None)
 
 
 def append_result(hdf5_path: str | Path, result_id: str, result_record: dict) -> None:
+    """Append one analysis result to the HDF5 store.
+
+    Creates (or replaces) the group ``analysis/entries/<result_id>``
+    and writes per-event metadata attributes and the peri-event
+    ``plot_data`` dataset.
+
+    Parameters
+    ----------
+    hdf5_path : str or Path
+    result_id : str
+        Unique identifier for this result (e.g. ``'result_000001'``).
+    result_record : dict
+        Must contain: ``file``, ``behavior``, ``animal_id``, ``date``,
+        ``time``, ``datetime``, ``session``, ``max_peak``, ``auc``,
+        ``plot_data`` (pd.DataFrame of z-score trials).
+    """
     with h5py.File(hdf5_path, 'a') as hdf5_file:
         entries_group = hdf5_file['analysis']['entries']
         if result_id in entries_group:
@@ -96,6 +134,19 @@ def append_result(hdf5_path: str | Path, result_id: str, result_record: dict) ->
 
 
 def write_index(hdf5_path: str | Path, records: Iterable[dict]) -> None:
+    """Write the flat result index to ``analysis/index``.
+
+    Replaces any existing index datasets.  Called once after all results
+    have been appended so that the GUI can load the index without
+    iterating every entry group.
+
+    Parameters
+    ----------
+    hdf5_path : str or Path
+    records : Iterable[dict]
+        Sequence of result record dicts (same structure as those passed
+        to :func:`append_result`).
+    """
     records_list = list(records)
     columns = ['result_id', 'file', 'behavior', 'animal_id', 'date', 'time', 'datetime', 'session']
 
@@ -116,6 +167,18 @@ def write_index(hdf5_path: str | Path, records: Iterable[dict]) -> None:
 
 
 def update_result_sessions(hdf5_path: str | Path, session_by_result_id: dict[str, str]) -> None:
+    """Patch the ``session`` attribute on existing entry groups.
+
+    Called after chronological session numbers are assigned so that each
+    entry reflects its computed session label without requiring a full
+    rewrite.
+
+    Parameters
+    ----------
+    hdf5_path : str or Path
+    session_by_result_id : dict[str, str]
+        Mapping of ``result_id`` → session label string.
+    """
     with h5py.File(hdf5_path, 'a') as hdf5_file:
         entries_group = hdf5_file['analysis']['entries']
         for result_id, session in session_by_result_id.items():
@@ -124,6 +187,24 @@ def update_result_sessions(hdf5_path: str | Path, session_by_result_id: dict[str
 
 
 def load_store_metadata(hdf5_path: str | Path) -> dict:
+    """Load top-level metadata from a PhotoBatch HDF5 file.
+
+    Parameters
+    ----------
+    hdf5_path : str or Path
+
+    Returns
+    -------
+    dict
+        All scalar attributes from the ``meta`` group plus
+        ``schema_version`` from the root attributes and, if present,
+        the ``config_text`` dataset as a string.
+
+    Raises
+    ------
+    ValueError
+        If *hdf5_path* is not a valid PhotoBatch analysis file.
+    """
     with h5py.File(hdf5_path, 'r') as hdf5_file:
         if 'meta' not in hdf5_file:
             raise ValueError('Not a valid PhotoBatch analysis HDF5 file.')
@@ -139,6 +220,19 @@ def load_store_metadata(hdf5_path: str | Path) -> dict:
 
 
 def load_results_index(hdf5_path: str | Path) -> pd.DataFrame:
+    """Load the flat result index as a DataFrame.
+
+    Parameters
+    ----------
+    hdf5_path : str or Path
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns: ``result_id``, ``file``, ``behavior``, ``animal_id``,
+        ``date``, ``time``, ``datetime``, ``session``, ``max_peak``,
+        ``auc``.  Returns an empty DataFrame if no index exists.
+    """
     with h5py.File(hdf5_path, 'r') as hdf5_file:
         if 'analysis' not in hdf5_file or 'index' not in hdf5_file['analysis']:
             return pd.DataFrame(columns=['result_id', 'file', 'behavior', 'animal_id', 'date', 'time', 'datetime', 'session', 'max_peak', 'auc'])
@@ -163,12 +257,39 @@ def load_results_index(hdf5_path: str | Path) -> pd.DataFrame:
 
 
 def load_plot_data(hdf5_path: str | Path, result_id: str) -> pd.DataFrame:
+    """Load the peri-event plot DataFrame for a single result.
+
+    Parameters
+    ----------
+    hdf5_path : str or Path
+    result_id : str
+
+    Returns
+    -------
+    pd.DataFrame
+        Trial z-score columns reconstructed from the compressed HDF5
+        dataset.
+    """
     with h5py.File(hdf5_path, 'r') as hdf5_file:
         entry_group = hdf5_file['analysis']['entries'][result_id]
         return _load_plot_data_from_entry(entry_group)
 
 
 def load_plot_data_map(hdf5_path: str | Path, result_ids: Iterable[str]) -> dict[str, pd.DataFrame]:
+    """Load peri-event plot DataFrames for multiple results in one file open.
+
+    Parameters
+    ----------
+    hdf5_path : str or Path
+    result_ids : Iterable[str]
+        Sequence of result IDs to load.
+
+    Returns
+    -------
+    dict[str, pd.DataFrame]
+        Mapping of result_id → plot DataFrame.  IDs not found in the
+        store are silently omitted.
+    """
     plot_data_map: dict[str, pd.DataFrame] = {}
     with h5py.File(hdf5_path, 'r') as hdf5_file:
         entries_group = hdf5_file['analysis']['entries']
@@ -180,6 +301,17 @@ def load_plot_data_map(hdf5_path: str | Path, result_ids: Iterable[str]) -> dict
 
 
 def _load_plot_data_from_entry(entry_group: h5py.Group) -> pd.DataFrame:
+    """Reconstruct a plot DataFrame from an open HDF5 entry group.
+
+    Parameters
+    ----------
+    entry_group : h5py.Group
+        An open group under ``analysis/entries/<result_id>``.
+
+    Returns
+    -------
+    pd.DataFrame
+    """
     plot_group = entry_group['plot_data']
     values = np.asarray(plot_group['values'][...], dtype=float)
     columns = _read_string_dataset(plot_group['columns'])
@@ -192,6 +324,7 @@ def _load_plot_data_from_entry(entry_group: h5py.Group) -> pd.DataFrame:
 
 
 def _normalize_string(value: object) -> str:
+    """Coerce *value* to a non-None string, returning '' for None/NaN."""
     if value is None:
         return ''
     try:
@@ -203,6 +336,7 @@ def _normalize_string(value: object) -> str:
 
 
 def _normalize_float(value: object) -> float:
+    """Coerce *value* to float, returning NaN for None/NaN/unconvertible."""
     try:
         if value is None or pd.isna(value):
             return float('nan')
@@ -215,6 +349,7 @@ def _normalize_float(value: object) -> float:
 
 
 def _read_string_dataset(dataset: h5py.Dataset) -> list[str]:
+    """Read an HDF5 string dataset and return a plain Python list of str."""
     try:
         return dataset.asstr()[...].tolist()
     except AttributeError:
@@ -223,6 +358,7 @@ def _read_string_dataset(dataset: h5py.Dataset) -> list[str]:
 
 
 def _decode_scalar(value: object) -> object:
+    """Decode a bytes scalar to str; pass through everything else."""
     if isinstance(value, bytes):
         return value.decode('utf-8')
     return value
