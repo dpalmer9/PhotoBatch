@@ -14,8 +14,11 @@ new objects; they never mutate shared state.
 """
 
 import csv
+import logging
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -156,11 +159,11 @@ def abet_trial_definition(abet_pd, time_var_name, start_event_group,
     if isinstance(start_event_group, list):
         if filtered_abet.iloc[0, 3] not in start_event_group:
             filtered_abet = filtered_abet.drop([0])
-            print('First Trial Event Not Start Stage. Moving to Next Event.')
+            logger.info("First trial event is not a start stage — skipping to next event.")
     elif isinstance(start_event_group, str):
         if filtered_abet.iloc[0, 3] != str(start_event_group):
             filtered_abet = filtered_abet.drop([0])
-            print('First Trial Event Not Start Stage. Moving to Next Event.')
+            logger.info("First trial event is not a start stage — skipping to next event.")
 
     trial_times  = filtered_abet.loc[:, time_var_name].reset_index(drop=True)
     start_times  = pd.to_numeric(trial_times.iloc[::2],  errors='coerce').reset_index(drop=True)
@@ -437,7 +440,6 @@ def abet_search_event(abet_pd, time_var_name, event_name_col,
     abet_end_times   = event_times + extra_follow_time
     abet_event_times = pd.concat([abet_start_times, abet_end_times], axis=1)
     abet_event_times.columns = ['Start_Time', 'End_Time']
-    print(abet_event_times)
 
     resolved_alias = event_alias if event_alias else start_event_item_name
 

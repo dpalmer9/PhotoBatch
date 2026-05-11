@@ -14,12 +14,15 @@ arpls / ar_pls / ar-pls
 """
 
 import gc
+import logging
 import numpy as np
 import pandas as pd
 import scipy.sparse as sparse
 from scipy.optimize import curve_fit
 from scipy.sparse.linalg import cg, spilu, LinearOperator, spsolve
 from sklearn.linear_model import HuberRegressor
+
+logger = logging.getLogger(__name__)
 
 def _linear_fit(filtered_f0, filtered_f, robust_fit=True, huber_epsilon='auto'):
     if robust_fit:
@@ -32,13 +35,13 @@ def _linear_fit(filtered_f0, filtered_f, robust_fit=True, huber_epsilon='auto'):
             residuals  = filtered_f - f_naive_pred
             mad_val    = np.median(np.abs(residuals - np.median(residuals)))
             epsilon_val = max(1.01, 1.4826 * mad_val)
-            print(f"Huber epsilon (auto/MAD): {epsilon_val:.4f}")
+            logger.debug("Huber epsilon (auto/MAD): %.4f", epsilon_val)
         else:
             try:
                 epsilon_val = max(1.01, float(huber_epsilon))
             except (ValueError, TypeError):
                 epsilon_val = 1.35
-            print(f"Huber epsilon (user-specified): {epsilon_val:.4f}")
+            logger.debug("Huber epsilon (user-specified): %.4f", epsilon_val)
 
         huber = HuberRegressor(epsilon=epsilon_val)
         huber.fit(f0_reshaped, filtered_f)

@@ -7,11 +7,14 @@ The `despike_signal` helper is provided via Signal.utilities and called
 internally when despike=True.
 """
 
+import logging
 import numpy as np
 from scipy import signal
 from scipy.interpolate import interp1d
 
 from photobatch.Processing.Signal.utilities import despike_signal
+
+logger = logging.getLogger(__name__)
 
 
 def signal_filter(signal_pd, filter_type='lowpass', filter_name='butterworth',
@@ -84,8 +87,7 @@ def signal_filter(signal_pd, filter_type='lowpass', filter_name='butterworth',
         f0_data = np.interp(uniform_time, time_data, f0_data)
         f_data  = np.interp(uniform_time, time_data, f_data)
         time_data = uniform_time
-        print(f"Interpolated to uniform grid: {len(time_data)} samples, "
-              f"dt={median_dt:.6f}s")
+        logger.debug("Interpolated to uniform grid: %d samples, dt=%.6f s", len(time_data), median_dt)
 
     sample_frequency = 1.0 / median_dt
 
@@ -93,12 +95,10 @@ def signal_filter(signal_pd, filter_type='lowpass', filter_name='butterworth',
     nyquist_freq = sample_frequency / 2.0
     if isinstance(filter_cutoff, (list, tuple, np.ndarray)):
         if any(fc >= nyquist_freq for fc in filter_cutoff):
-            print(f"Warning: one or more filter_cutoff frequencies ({filter_cutoff} Hz) are above Nyquist frequency "
-                  f"({nyquist_freq:.2f} Hz). Filter may not work as intended.")
+            logger.warning("One or more filter_cutoff frequencies (%s Hz) exceed Nyquist (%.2f Hz) — filter behaviour undefined.", filter_cutoff, nyquist_freq)
     else:
         if filter_cutoff >= nyquist_freq:
-            print(f"Warning: filter_cutoff ({filter_cutoff} Hz) is above Nyquist frequency "
-                  f"({nyquist_freq:.2f} Hz). Filter may not work as intended.")
+            logger.warning("filter_cutoff (%.2f Hz) exceeds Nyquist frequency (%.2f Hz) — filter behaviour undefined.", filter_cutoff, nyquist_freq)
 
     # --- Default: no filter ---
     filtered_f0 = f0_data.copy()

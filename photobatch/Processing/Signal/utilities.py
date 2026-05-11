@@ -5,8 +5,11 @@ These helpers operate on any time-series DataFrame that has a 'Time' column
 and on raw NumPy arrays, so they are reusable across future vendor modules.
 """
 
+import logging
 import numpy as np
 from scipy.ndimage import median_filter
+
+logger = logging.getLogger(__name__)
 
 
 def despike_signal(sig_array, window=2001, threshold=5.0):
@@ -29,7 +32,7 @@ def despike_signal(sig_array, window=2001, threshold=5.0):
     # Check if window is odd; if not, make it odd by adding 1
     if window % 2 == 0:
         window += 1
-        print(f"Warning: Despike window size must be odd. Adjusted to {window}.")
+        logger.warning("Despike window size must be odd — adjusted to %d.", window)
     # Check if window is larger than signal length; if so, return with ValueError
     if window > len(sig_array):
         raise ValueError(f"Despike window size ({window}) cannot be larger than signal length ({len(sig_array)}).")

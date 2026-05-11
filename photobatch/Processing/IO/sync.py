@@ -11,10 +11,16 @@ vendor-specific pulse extraction is done upstream in the IO/Behaviour and
 IO/Photometry loaders before their DataFrames are passed here.
 """
 
+import logging
+
 import numpy as np
 import pandas as pd
 from scipy import signal
 from sklearn.linear_model import LinearRegression
+
+from photobatch.exceptions import SynchronizationError
+
+logger = logging.getLogger(__name__)
 
 
 def abet_doric_synchronize(doric_pd, ttl_pd, abet_pd):
@@ -46,13 +52,13 @@ def abet_doric_synchronize(doric_pd, ttl_pd, abet_pd):
     try:
         doric_ttl_active = ttl_pd.loc[ttl_pd['TTL'] >= 3.00]
     except KeyError:
-        print('No TTL Signal Detected. Ending Analysis.')
+        logger.warning("No TTL signal detected in photometry data — skipping synchronization.")
         return doric_pd
 
     try:
         abet_ttl_active = abet_pd.loc[abet_pd['Item_Name'] == 'TTL #1']
     except KeyError:
-        print('ABET II File missing TTL Pulse Output. Ending Analysis.')
+        logger.warning("ABET file is missing TTL pulse output — skipping synchronization.")
         return doric_pd
 
     doric_ttl_times_all = doric_ttl_active['Time'].values.astype(float)
@@ -68,11 +74,10 @@ def abet_doric_synchronize(doric_pd, ttl_pd, abet_pd):
     doric_ttl_times = np.array(filtered_doric_ttl)
 
     abet_ttl_times = abet_ttl_active.iloc[:, 0].values.astype(float)
-    print(f"Doric TTL count: {len(doric_ttl_times)}, "
-          f"ABET TTL count: {len(abet_ttl_times)}")
+    logger.info("TTL pulse counts — Doric: %d, ABET: %d", len(doric_ttl_times), len(abet_ttl_times))
 
     if len(doric_ttl_times) < 2 or len(abet_ttl_times) < 2:
-        print("Not enough TTL pulses for cross-correlation synchronization.")
+        logger.warning("Fewer than 2 TTL pulses in one or both streams — cannot synchronize.")
         return doric_pd
 
     # --- Binary event vectors on a shared time grid ---
@@ -98,7 +103,7 @@ def abet_doric_synchronize(doric_pd, ttl_pd, abet_pd):
     lags            = np.arange(-(len(abet_vec) - 1), len(doric_vec))
     best_lag_idx    = np.argmax(correlation)
     best_lag_secs   = lags[best_lag_idx] * grid_res
-    print(f"Cross-correlation optimal lag: {best_lag_secs:.4f} s")
+    logger.debug("Cross-correlation optimal lag: %.4f s", best_lag_secs)
 
     # --- Pair nearest pulses within tolerance ---
     abet_shifted   = abet_ttl_times + best_lag_secs
@@ -118,12 +123,10 @@ def abet_doric_synchronize(doric_pd, ttl_pd, abet_pd):
 
     paired_doric = np.array(paired_doric)
     paired_abet  = np.array(paired_abet)
-    print(f"Paired {len(paired_doric)} of {len(doric_ttl_times)} Doric / "
-          f"{len(abet_ttl_times)} ABET TTL pulses")
+    logger.info("Paired %d of %d Doric / %d ABET TTL pulses", len(paired_doric), len(doric_ttl_times), len(abet_ttl_times))
 
     if len(paired_doric) < 2:
-        print("Not enough paired TTL pulses for linear regression. "
-              "Synchronization failed.")
+        logger.warning("Too few paired TTL pulses (%d) for regression — synchronization failed.", len(paired_doric))
         return doric_pd
 
     # --- Linear regression ---
@@ -132,14 +135,12 @@ def abet_doric_synchronize(doric_pd, ttl_pd, abet_pd):
 
     predicted     = ttl_model.predict(paired_doric.reshape(-1, 1))
     residual_err  = np.abs(paired_abet - predicted).mean()
-    print(f"Synchronization Residual Error (Mean Abs): {residual_err:.4f} s")
+    logger.info("Synchronization residual error (mean absolute): %.4f s", residual_err)
     if residual_err > 0.1:
-        print("WARNING: High synchronization error detected. "
-              "Sync may be mismatched.")
+        logger.warning("High synchronization residual error (%.4f s) — check TTL alignment.", residual_err)
 
     synced_pd = doric_pd.copy()
     synced_pd['Time'] = (doric_pd['Time'] * ttl_model.coef_[0] +
                          ttl_model.intercept_)
-    print(synced_pd['Time'].head(20))
 
     return synced_pd

@@ -11,8 +11,12 @@ _generate_event_alias – derive a display label for an event row.
 _create_filter_list   – parse filter columns from an event-sheet row.
 """
 
+import logging
+
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -176,20 +180,20 @@ def trial_separator(abet_time_list, trial_definition_times, doric_pd,
             start_time  = float(row.Start_Time)
             start_index = np.searchsorted(doric_time_array, start_time, side='left')
             if start_index >= len(doric_time_array):
-                print('Trial Start Out of Bounds, Skipping Event')
+                logger.warning("Trial start time %.3f s is out of bounds — skipping trial %d.", start_time, index)
                 continue
         except (IndexError, ValueError, TypeError):
-            print('Trial Start Out of Bounds or invalid, Skipping Event')
+            logger.warning("Trial start time is invalid for trial %d — skipping.", index)
             continue
 
         try:
             end_time  = float(row.End_Time)
             end_index = np.searchsorted(doric_time_array, end_time, side='right')
             if end_index < 0 or end_index >= len(doric_time_array):
-                print('Trial End Out of Bounds, Skipping Event')
+                logger.warning("Trial end time %.3f s is out of bounds — skipping trial %d.", end_time, index)
                 continue
         except (IndexError, ValueError, TypeError):
-            print('Trial End Out of Bounds or invalid, Skipping Event')
+            logger.warning("Trial end time is invalid for trial %d — skipping.", index)
             continue
 
         try:

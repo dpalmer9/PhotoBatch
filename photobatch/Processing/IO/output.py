@@ -7,10 +7,13 @@ write_data    – write per-event trial data to CSV (wide or long format).
 write_summary – append per-session aggregate statistics to an Excel workbook.
 """
 
+import logging
 import os
 import pandas as pd
 from datetime import datetime
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def write_data(output_data, main_folder_path,
@@ -69,7 +72,7 @@ def write_data(output_data, main_folder_path,
     if filename_override:
         file_path_string = filename_override + '-' + output_string + '.csv'
 
-    print(file_path_string)
+    logger.debug("Writing output file: %s", file_path_string)
 
     if format == 'long':
         if output_data in processed_list:

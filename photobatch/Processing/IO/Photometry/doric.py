@@ -13,6 +13,10 @@ return DataFrames; they do not mutate any shared state.
 import pandas as pd
 import numpy as np
 import h5py
+import logging
+from photobatch.exceptions import UnsupportedFileFormatError
+
+logger = logging.getLogger(__name__)
 
 
 def load_doric_data(filepath, ch1_col, ch2_col, ttl_col, mode=''):
@@ -64,7 +68,6 @@ def load_doric_data_csv(filepath, ch1_col, ch2_col, ttl_col, mode=''):
     """
     doric_colnames = ['Time', 'Control', 'Active']
     ttl_colnames   = ['Time', 'TTL']
-    print(mode)
 
     if mode == 'col_index':
         doric_data = pd.read_csv(filepath, header=1)
@@ -192,13 +195,16 @@ def load_doric_data_h5(filepath, ch1_col, ch2_col, ttl_col, mode=''):
                 ttl_data = np.array(doric_dataset['AnalogIn'][key])
 
     elif software_version in ('6.2.5.0', ''):
-        print('The HDF5 File contains unresolvable Time Series Data, '
-              'moving to next session')
-        return None, None
+        raise UnsupportedFileFormatError(
+            f"Doric software version '{software_version}' produces unresolvable "
+            "time-series data and is not supported. Skipping this session."
+        )
 
     else:
-        print(f'Unrecognised Doric software version: {software_version}')
-        return None, None
+        raise UnsupportedFileFormatError(
+            f"Unrecognised Doric software version: '{software_version}'. "
+            "Supported versions: 6.1.5.0, 6.3.1.0, 6.3.2.0."
+        )
     
     # Calculate Adjusted Time based on iso_time and act_time to ensure it covers the full range of both
     if iso_time is not None and act_time is not None:
@@ -209,6 +215,5 @@ def load_doric_data_h5(filepath, ch1_col, ch2_col, ttl_col, mode=''):
     doric_pd = pd.DataFrame({'Time': adj_time, 'Iso_Time': iso_time, 'Control': iso_data, 'Active_Time': act_time,
                              'Active': act_data}).astype('float')
     ttl_pd   = pd.DataFrame({'Time': ttl_time, 'TTL': ttl_data}).astype('float')
-    print(act_data)
 
     return doric_pd, ttl_pd
