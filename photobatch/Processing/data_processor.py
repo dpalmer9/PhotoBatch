@@ -2,6 +2,7 @@
 import os
 import io
 import csv
+import logging
 import dateutil.parser
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
@@ -11,16 +12,13 @@ import numpy as np
 import pandas as pd
 
 # Sub-package imports
-from photobatch.Processing.IO.Photometry.doric import (
-    load_doric_data as _load_doric_data,
-)
+from photobatch.exceptions import PhotobatchError, UnsupportedFileFormatError
+from photobatch.Processing.IO import BEHAVIOUR_REGISTRY, SIGNAL_REGISTRY, SYNC_REGISTRY
 from photobatch.Processing.IO.Behaviour.abet import (
-    load_abet_data as _load_abet_data,
     abet_extract_information,
     abet_trial_definition as _abet_trial_definition,
     abet_search_event as _abet_search_event,
 )
-from photobatch.Processing.IO.sync import abet_doric_synchronize as _synchronize
 from photobatch.Processing.IO.output import write_data as _write_data, write_summary as _write_summary
 from photobatch.Processing.Signal.utilities import despike_signal, crop_signal
 from photobatch.Processing.Signal.filter import signal_filter as _signal_filter
@@ -34,6 +32,13 @@ from photobatch.Processing.Process.event import (
     _create_filter_list,
 )
 from photobatch.Processing import hdf_store
+
+
+# ---------------------------------------------------------------------------
+# Module-level logger
+# ---------------------------------------------------------------------------
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -115,18 +120,55 @@ class SignalEventData:
         self.trial_definition_times = pd.DataFrame()
 
     # -----------------------------------------------------------------------
+    # IO – generic vendor-dispatched loaders
+    # -----------------------------------------------------------------------
+
+    def load_behaviour_data(self, filepath, vendor='abet'):
+        """Load behaviour data using the specified vendor plugin."""
+        loader = BEHAVIOUR_REGISTRY[vendor]['load']
+        self.abet_file_path = filepath
+        self.behaviour_loaded = True
+        (self.behaviour_df,
+         self.animal_id,
+         self.date,
+         self.time_var_name,
+         self.event_name_col) = loader(filepath)
+        # Backward compat: set old names
+        self.abet_loaded = True
+        self.abet_pandas = self.behaviour_df
+
+    def load_signal_data(self, filepath, ch1_col, ch2_col, ttl_col,
+                         mode='', vendor='doric'):
+        """Load signal data using the specified vendor plugin."""
+        loader = SIGNAL_REGISTRY[vendor]['load']
+        self.signal_loaded = True
+        self.doric_file_path = filepath
+        result = loader(filepath, ch1_col, ch2_col, ttl_col, mode)
+        if result is None or result[0] is None:
+            self.signal_loaded = False
+            return
+        self.signal_df, self.ttl_pandas = result
+        # Backward compat: set old names
+        self.doric_loaded = True
+        self.doric_pandas = self.signal_df
+
+    def synchronize_time(self, behaviour_vendor='abet', signal_vendor='doric'):
+        """Align signal time axis to behaviour time via TTL cross-correlation."""
+        if not self.behaviour_loaded or not self.signal_loaded:
+            return None
+        sync_fn = SYNC_REGISTRY[(behaviour_vendor, signal_vendor)]
+        self.signal_df = sync_fn(
+            self.signal_df, self.ttl_pandas, self.behaviour_df)
+        # Backward compat: update old name
+        self.doric_pandas = self.signal_df
+
+    # -----------------------------------------------------------------------
     # IO – Behaviour (ABET)
     # -----------------------------------------------------------------------
 
     def load_abet_data(self, filepath):
-        """Load ABET II / ABET Cognition data from *filepath*."""
-        self.abet_file_path = filepath
-        self.abet_loaded    = True
-        (self.abet_pandas,
-         self.animal_id,
-         self.date,
-         self.time_var_name,
-         self.event_name_col) = _load_abet_data(filepath)
+        """Load ABET II / ABET Cognition data from *filepath*. Delegates to load_behaviour_data."""
+        self.load_behaviour_data(filepath, vendor='abet')
 
     def abet_trial_definition(self, start_event_group, end_event_group):
         """Define trial start/end windows from ABET Condition Events."""
@@ -170,25 +212,16 @@ class SignalEventData:
     # -----------------------------------------------------------------------
 
     def load_doric_data(self, filepath, ch1_col, ch2_col, ttl_col, mode=''):
-        """Load Doric photometry data from *filepath* (.csv or .doric)."""
-        self.doric_loaded    = True
-        self.doric_file_path = filepath
-        result = _load_doric_data(filepath, ch1_col, ch2_col, ttl_col, mode)
-        if result is None or result[0] is None:
-            self.doric_loaded = False
-            return
-        self.doric_pandas, self.ttl_pandas = result
+        """Load Doric photometry data from *filepath* (.csv or .doric). Delegates to load_signal_data."""
+        self.load_signal_data(filepath, ch1_col, ch2_col, ttl_col, mode, vendor='doric')
 
     # -----------------------------------------------------------------------
     # IO – Synchronization
     # -----------------------------------------------------------------------
 
     def abet_doric_synchronize(self):
-        """Align Doric time axis to ABET time via TTL cross-correlation."""
-        if not self.abet_loaded or not self.doric_loaded:
-            return None
-        self.doric_pandas = _synchronize(
-            self.doric_pandas, self.ttl_pandas, self.abet_pandas)
+        """Align Doric time axis to ABET time via TTL cross-correlation. Delegates to synchronize_time."""
+        self.synchronize_time(behaviour_vendor='abet', signal_vendor='doric')
 
     # -----------------------------------------------------------------------
     # Signal – crop / utilities
@@ -401,13 +434,26 @@ def _process_single_file(args):
     file_results = []
 
     photometry_data = SignalEventData()
-    photometry_data.load_abet_data(row['abet_path'])
-    photometry_data.load_doric_data(
-        row['doric_path'], row['ctrl_col_num'],
-        row['act_col_num'], row['ttl_col_num'], row['mode'])
+    try:
+        photometry_data.load_behaviour_data(row['abet_path'], vendor='abet')
+        photometry_data.load_signal_data(
+            row['doric_path'], row['ctrl_col_num'],
+            row['act_col_num'], row['ttl_col_num'], row['mode'], vendor='doric')
+    except UnsupportedFileFormatError as exc:
+        logger.warning(
+            "Skipping file pair (%s, %s): %s",
+            row.get('abet_path', '?'), row.get('doric_path', '?'), exc,
+        )
+        return []
+    except (FileNotFoundError, OSError) as exc:
+        logger.error(
+            "Cannot open file pair (%s, %s): %s",
+            row.get('abet_path', '?'), row.get('doric_path', '?'), exc,
+        )
+        return []
 
-    if photometry_data.abet_loaded:
-        photometry_data.abet_doric_synchronize()
+    if photometry_data.behaviour_loaded:
+        photometry_data.synchronize_time(behaviour_vendor='abet', signal_vendor='doric')
 
     photometry_data.doric_crop(
         start_time_remove=crop_start, end_time_remove=crop_end)
@@ -436,8 +482,8 @@ def _process_single_file(args):
     photometry_data.abet_trial_definition(trial_start_stage, trial_end_stage)
 
     try:
-        animal_id, date, time, datetime_str, _ = abet_extract_information(
-            row['abet_path'])
+        extract_info = BEHAVIOUR_REGISTRY['abet']['extract_info']
+        animal_id, date, time, datetime_str, _ = extract_info(row['abet_path'])
     except (FileNotFoundError, OSError, IndexError, ValueError):
         animal_id = date = time = datetime_str = None
 
@@ -501,12 +547,10 @@ def _process_single_file(args):
         except (ValueError, TypeError):
             plot_df_copy = pd.DataFrame(plot_df)
 
-        try:
-            print(f"Processed file={row['abet_path']} "
-                  f"behavior={event_alias} "
-                  f"plot_shape={plot_df_copy.shape}")
-        except (KeyError, AttributeError):
-            print("Processed one result (unable to format debug info)")
+        logger.info(
+            "Processed file=%s  behavior=%s  plot_shape=%s",
+            row.get('abet_path', '?'), event_alias, plot_df_copy.shape,
+        )
 
         file_results.append({
             'file':      os.path.basename(row['abet_path']),
@@ -606,7 +650,8 @@ def process_files(file_sheet_path, event_sheet_path, output_options,
 
     try:
         config_text = config.to_json_string()
-    except Exception:
+    except (AttributeError, TypeError) as exc:
+        logger.warning("Could not serialise config to JSON: %s", exc)
         config_text = ''
 
     hdf5_path = hdf_store.initialize_results_file(
@@ -651,23 +696,27 @@ def process_files(file_sheet_path, event_sheet_path, output_options,
                 for future in as_completed(futures):
                     try:
                         persist_result_batch(future.result())
-                    except Exception as e:
-                        print(f"Worker error for file pair "
-                              f"{futures[future]}: {e}")
-        except Exception as e:
-            print(f"ProcessPoolExecutor failed ({e}); "
-                  f"falling back to sequential processing.")
+                    except Exception as exc:
+                        logger.error(
+                            "Worker error for file pair %d: %s",
+                            futures[future], exc, exc_info=True,
+                        )
+        except Exception as exc:
+            logger.error(
+                "ProcessPoolExecutor failed (%s) — falling back to sequential processing.",
+                exc, exc_info=True,
+            )
             for args in args_list:
                 try:
                     persist_result_batch(_process_single_file(args))
-                except Exception as ex:
-                    print(f"Sequential fallback error: {ex}")
+                except Exception as fallback_exc:
+                    logger.error("Sequential fallback error: %s", fallback_exc, exc_info=True)
     else:
         for args in args_list:
             try:
                 persist_result_batch(_process_single_file(args))
-            except Exception as e:
-                print(f"Processing error: {e}")
+            except Exception as exc:
+                logger.error("Processing error: %s", exc, exc_info=True)
 
     # ------------------------------------------------------------------
     # Assign session numbers per animal based on chronological order
@@ -685,7 +734,8 @@ def process_files(file_sheet_path, event_sheet_path, output_options,
             sorted_dts = sorted(
                 list(dt_set),
                 key=lambda x: dateutil.parser.parse(x) if x else pd.Timestamp(0))
-        except Exception:
+        except (ValueError, TypeError) as exc:
+            logger.debug("Could not parse datetime strings for session ordering: %s", exc)
             sorted_dts = sorted(list(dt_set))
         animal_session_map[aid] = {
             dt: f"Session {i+1}" for i, dt in enumerate(sorted_dts)}
