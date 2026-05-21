@@ -24,9 +24,15 @@ gui = [
     "PySide6>=6.5.0",
     "matplotlib>=3.7.0",
 ]
+test = [
+    "pytest>=8.0.0",
+]
 
 [project.scripts]
 photobatch = "main:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 where = ["."]
