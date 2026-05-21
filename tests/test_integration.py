@@ -2,9 +2,11 @@ import csv
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
+from photobatch.exceptions import SynchronizationError
 from photobatch.Processing import hdf_store
-from photobatch.Processing.data_processor import process_files
+from photobatch.Processing.data_processor import _process_single_file, process_files
 from photobatch.config_manager import ConfigManager
 
 
@@ -140,3 +142,75 @@ def test_process_files_persists_results_to_hdf5(tmp_path, monkeypatch):
     plot_df = hdf_store.load_plot_data(results_path, result_id)
     assert not plot_df.empty
     assert list(plot_df.columns) == ["Z-Score Trial 1", "Z-Score Trial 2"]
+
+
+def test_process_single_file_skips_when_synchronization_fails(monkeypatch, caplog, tmp_path):
+    class StubSignalEventData:
+        def __init__(self):
+            self.behaviour_loaded = True
+            self.signal_loaded = True
+
+        def load_behaviour_data(self, filepath, vendor="abet"):
+            return None
+
+        def load_signal_data(self, filepath, ch1_col, ch2_col, ttl_col, mode, vendor="doric"):
+            return None
+
+        def synchronize_time(self, behaviour_vendor="abet", signal_vendor="doric"):
+            raise SynchronizationError("synthetic failure")
+
+    monkeypatch.setattr("photobatch.Processing.data_processor.SignalEventData", StubSignalEventData)
+
+    event_sheet_path = tmp_path / "event_sheet.csv"
+    pd.DataFrame(
+        [{"event_type": "Condition Event", "event_name": "Display Image", "event_group": 20, "num_filter": 0}]
+    ).to_csv(event_sheet_path, index=False)
+
+    row_dict = {
+        "abet_path": "synthetic_abet.csv",
+        "doric_path": "synthetic_doric.csv",
+        "ctrl_col_num": 1,
+        "act_col_num": 2,
+        "ttl_col_num": 3,
+        "mode": "col_index",
+    }
+    args = (
+        row_dict,
+        str(event_sheet_path),
+        [],
+        0.5,
+        0.5,
+        ["Display Image"],
+        ["Reward Collected Start ITI"],
+        0.5,
+        "whole",
+        "mean",
+        False,
+        "Left",
+        "lowpass",
+        "butterworth",
+        2,
+        2,
+        False,
+        11,
+        5.0,
+        1.0,
+        "linear",
+        None,
+        False,
+        "auto",
+        1e5,
+        50,
+        1e-6,
+        1e-8,
+        2.0,
+        [],
+        0.0,
+        0.0,
+    )
+
+    with caplog.at_level("ERROR"):
+        result = _process_single_file(args)
+
+    assert result == []
+    assert "Time synchronization failed for file pair" in caplog.text
