@@ -1,0 +1,142 @@
+import csv
+from pathlib import Path
+
+import numpy as np
+
+from photobatch.Processing import hdf_store
+from photobatch.Processing.data_processor import process_files
+from photobatch.config_manager import ConfigManager
+
+
+def _write_abet_csv(path: Path):
+    rows = [
+        ["Animal ID", "Mouse-1"],
+        ["Date/Time", "2024/01/02 12:00:00"],
+        ["Schedule", "Synthetic"],
+        ["Evnt_Time", "Evnt_ID", "Evnt_Name", "Item_Name", "Group_ID", "Arg1_Value"],
+        [1.0, "1", "Output Event", "TTL #1", "99", ""],
+        [5.0, "1", "Output Event", "TTL #1", "99", ""],
+        [9.0, "1", "Output Event", "TTL #1", "99", ""],
+        [2.0, "1", "Condition Event", "Display Image", "20", ""],
+        [3.0, "1", "Condition Event", "Reward Collected Start ITI", "8", ""],
+        [6.0, "1", "Condition Event", "Display Image", "20", ""],
+        [7.0, "1", "Condition Event", "Reward Collected Start ITI", "8", ""],
+    ]
+    with open(path, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerows(rows)
+
+
+def _write_doric_csv(path: Path):
+    time = np.arange(0.0, 12.0, 0.05)
+    control = 10.0 + 0.2 * np.sin(2.0 * np.pi * 0.2 * time)
+    active = control + 0.5 * np.sin(2.0 * np.pi * 1.0 * time)
+    ttl = np.zeros_like(time)
+    for pulse_time in (1.0, 5.0, 9.0):
+        pulse_index = np.searchsorted(time, pulse_time)
+        ttl[pulse_index:pulse_index + 2] = 5.0
+
+    with open(path, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["Doric export", "", "", ""])
+        writer.writerow(["Time", "Control", "Active", "TTL"])
+        for row in zip(time, control, active, ttl):
+            writer.writerow(row)
+
+
+def _write_event_sheet(path: Path):
+    rows = [
+        {
+            "event_type": "Condition Event",
+            "event_name": "Display Image",
+            "event_group": 20,
+            "num_filter": 0,
+            "event_alias": "Display Image",
+        }
+    ]
+
+    with open(path, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=["event_type", "event_name", "event_group", "num_filter", "event_alias"],
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _write_file_sheet(path: Path, abet_path: Path, doric_path: Path):
+    rows = [
+        {
+            "abet_path": str(abet_path),
+            "doric_path": str(doric_path),
+            "ctrl_col_num": 1,
+            "act_col_num": 2,
+            "ttl_col_num": 3,
+            "mode": "col_index",
+        }
+    ]
+
+    with open(path, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=["abet_path", "doric_path", "ctrl_col_num", "act_col_num", "ttl_col_num", "mode"],
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def test_process_files_persists_results_to_hdf5(tmp_path, monkeypatch):
+    abet_path = tmp_path / "session_abet.csv"
+    doric_path = tmp_path / "session_doric.csv"
+    event_sheet_path = tmp_path / "event_sheet.csv"
+    file_sheet_path = tmp_path / "file_sheet.csv"
+    hdf5_path = tmp_path / "results.hdf5"
+
+    _write_abet_csv(abet_path)
+    _write_doric_csv(doric_path)
+    _write_event_sheet(event_sheet_path)
+    _write_file_sheet(file_sheet_path, abet_path, doric_path)
+
+    repo_root = Path(__file__).resolve().parents[1]
+    config = ConfigManager(repo_root / "photobatch")
+    config["Event_Window"]["event_prior"] = 0.5
+    config["Event_Window"]["event_follow"] = 0.5
+    config["Normalization"]["center_z"] = "whole"
+    config["Normalization"]["center_method"] = "mean"
+    config["Normalization"]["normalize_side"] = "Left"
+    config["Normalization"]["iti_prior_trial"] = 0.5
+    config["Signal_Filter"]["filter_type"] = "lowpass"
+    config["Signal_Filter"]["filter_name"] = "butterworth"
+    config["Signal_Filter"]["filter_order"] = 2
+    config["Signal_Filter"]["filter_cutoff"] = 2
+    config["Signal_Utilities"]["despike"] = False
+    config["Signal_Utilities"]["despike_window"] = 11
+    config["Signal_Fitting"]["fit_type"] = "linear"
+    config["Signal_Fitting"]["baseline_detrend"] = None
+    config["Signal_Fitting"]["robust_fit"] = False
+    config["ABET"]["trial_start_stage"] = "Display Image"
+    config["ABET"]["trial_end_stage"] = "Reward Collected Start ITI"
+    config["ABET"]["exclusion_list"] = ""
+
+    monkeypatch.setattr(hdf_store, "get_default_results_path", lambda: hdf5_path)
+
+    results_path = process_files(
+        file_sheet_path=str(file_sheet_path),
+        event_sheet_path=str(event_sheet_path),
+        output_options=[],
+        config=config,
+        num_workers=1,
+    )
+
+    assert Path(results_path).exists()
+
+    index_df = hdf_store.load_results_index(results_path)
+    assert len(index_df) == 1
+    assert index_df.iloc[0]["behavior"] == "Display Image"
+    assert index_df.iloc[0]["animal_id"] == "Mouse-1"
+    assert index_df.iloc[0]["session"] == "Session 1"
+
+    result_id = index_df.iloc[0]["result_id"]
+    plot_df = hdf_store.load_plot_data(results_path, result_id)
+    assert not plot_df.empty
+    assert list(plot_df.columns) == ["Z-Score Trial 1", "Z-Score Trial 2"]
