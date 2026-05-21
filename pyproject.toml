@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=82.0", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "photobatch"
@@ -10,23 +10,23 @@ readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
 dependencies = [
-    "numpy==2.4.3",
-    "scipy==1.17.1",
-    "pandas==3.0.1",
-    "h5py==3.16.0",
-    "python-dateutil==2.9.0.post0",
-    "statsmodels==0.14.6",
-    "scikit-learn==1.8.0",
+    "numpy>=2.0.0",
+    "scipy>=1.10.0",
+    "pandas>=2.0.0",
+    "h5py>=3.8.0",
+    "python-dateutil>=2.8.2",
+    "statsmodels>=0.14.0",
+    "scikit-learn>=1.2.0",
 ]
 
 [project.optional-dependencies]
 gui = [
-    "PySide6==6.10.2",
-    "matplotlib==3.10.8",
+    "PySide6>=6.5.0",
+    "matplotlib>=3.7.0",
 ]
 
 [project.scripts]
-photobatch = "photobatch.GUI.launch:launch_photobatch"
+photobatch = "main:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
