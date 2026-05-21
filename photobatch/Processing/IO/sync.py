@@ -47,7 +47,12 @@ def abet_doric_synchronize(doric_pd, ttl_pd, abet_pd):
     -------
     pd.DataFrame
         A copy of *doric_pd* with the 'Time' column remapped to ABET time.
-        Returns the original *doric_pd* unchanged if synchronization fails.
+
+    Raises
+    ------
+    SynchronizationError
+        If there are too few TTL pulses to align the streams or too few
+        pulse pairs remain for regression.
     """
     try:
         doric_ttl_active = ttl_pd.loc[ttl_pd['TTL'] >= 3.00]
@@ -77,8 +82,9 @@ def abet_doric_synchronize(doric_pd, ttl_pd, abet_pd):
     logger.info("TTL pulse counts — Doric: %d, ABET: %d", len(doric_ttl_times), len(abet_ttl_times))
 
     if len(doric_ttl_times) < 2 or len(abet_ttl_times) < 2:
-        logger.warning("Fewer than 2 TTL pulses in one or both streams — cannot synchronize.")
-        return doric_pd
+        raise SynchronizationError(
+            "Fewer than 2 TTL pulses in one or both streams - cannot synchronize."
+        )
 
     # --- Binary event vectors on a shared time grid ---
     all_times  = np.concatenate([doric_ttl_times, abet_ttl_times])
@@ -126,8 +132,9 @@ def abet_doric_synchronize(doric_pd, ttl_pd, abet_pd):
     logger.info("Paired %d of %d Doric / %d ABET TTL pulses", len(paired_doric), len(doric_ttl_times), len(abet_ttl_times))
 
     if len(paired_doric) < 2:
-        logger.warning("Too few paired TTL pulses (%d) for regression — synchronization failed.", len(paired_doric))
-        return doric_pd
+        raise SynchronizationError(
+            "Too few paired TTL pulses for regression - synchronization failed."
+        )
 
     # --- Linear regression ---
     ttl_model = LinearRegression()

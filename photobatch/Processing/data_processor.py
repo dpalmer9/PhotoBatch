@@ -12,7 +12,12 @@ import numpy as np
 import pandas as pd
 
 # Sub-package imports
-from photobatch.exceptions import PhotobatchError, UnsupportedFileFormatError, MissingColumnError
+from photobatch.exceptions import (
+    PhotobatchError,
+    SynchronizationError,
+    UnsupportedFileFormatError,
+    MissingColumnError,
+)
 from photobatch.Processing.IO import BEHAVIOUR_REGISTRY, SIGNAL_REGISTRY, SYNC_REGISTRY
 from photobatch.Processing.IO.Behaviour.abet import (
     abet_extract_information,
@@ -502,8 +507,15 @@ def _process_single_file(args):
         )
         return []
 
-    if photometry_data.behaviour_loaded:
-        photometry_data.synchronize_time(behaviour_vendor='abet', signal_vendor='doric')
+    try:
+        if photometry_data.behaviour_loaded:
+            photometry_data.synchronize_time(behaviour_vendor='abet', signal_vendor='doric')
+    except SynchronizationError as exc:
+        logger.error(
+            "Time synchronization failed for file pair (%s, %s): %s - skipping.",
+            row.get('abet_path', '?'), row.get('doric_path', '?'), exc,
+        )
+        return []
 
     photometry_data.doric_crop(
         start_time_remove=crop_start, end_time_remove=crop_end)
