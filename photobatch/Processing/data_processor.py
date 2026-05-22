@@ -460,20 +460,34 @@ def _process_single_file(args):
     of per-event result dicts.  Accepts a single tuple so it is safely
     picklable across process boundaries.
     """
-    (row_dict, event_sheet_path, output_options,
-     event_window_prior, event_window_follow,
-     trial_start_stage, trial_end_stage,
-        iti_prior_trial, center_z, center_method, scale_median, normalize_side,
-     filter_type, filter_name, filter_order, filter_cutoff,
-     despike, despike_window, despike_threshold, cheby_ripple,
-     fit_type, baseline_detrend, robust_fit, huber_epsilon,
-     arpls_lambda, arpls_max_iter, arpls_tol, arpls_eps, arpls_weight_scale,
-     exclusion_list, crop_start, crop_end) = args
+    if len(args) == 33:
+        (row_dict, event_sheet_path, output_options,
+         event_window_prior, event_window_follow,
+         trial_start_stage, trial_end_stage,
+         iti_prior_trial, center_z, center_method, scale_median, normalize_side,
+         filter_type, filter_name, filter_order, filter_cutoff,
+         despike, despike_window, despike_threshold, cheby_ripple,
+         fit_type, baseline_detrend, robust_fit, huber_epsilon,
+         arpls_lambda, arpls_max_iter, arpls_tol, arpls_eps, arpls_weight_scale,
+         exclusion_list, crop_start, crop_end, output_path) = args
+    else:
+        (row_dict, event_sheet_path, output_options,
+         event_window_prior, event_window_follow,
+         trial_start_stage, trial_end_stage,
+         iti_prior_trial, center_z, center_method, scale_median, normalize_side,
+         filter_type, filter_name, filter_order, filter_cutoff,
+         despike, despike_window, despike_threshold, cheby_ripple,
+         fit_type, baseline_detrend, robust_fit, huber_epsilon,
+         arpls_lambda, arpls_max_iter, arpls_tol, arpls_eps, arpls_weight_scale,
+         exclusion_list, crop_start, crop_end) = args
+        output_path = ''
 
     row = pd.Series(row_dict)
     file_results = []
 
     photometry_data = SignalEventData()
+    if output_path:
+        photometry_data.main_folder_path = output_path
     try:
         photometry_data.load_behaviour_data(row['abet_path'], vendor='abet')
         photometry_data.load_signal_data(
@@ -602,10 +616,18 @@ def _process_single_file(args):
         )
 
         for output in output_options:
-            if output <= 7:
+            if output <= 5:
                 photometry_data.write_data(output)
-            else:
-                photometry_data.write_summary(output)
+            elif output in (6, 7):
+                summary_type = output - 5
+                summary_string = f"{event_alias}_" if event_alias else f"{event_name}_"
+                session_string = f"{animal_id}_{date}" if (animal_id and date) else Path(row['abet_path']).stem
+                photometry_data.write_summary(
+                    summary_type,
+                    summary_string=summary_string,
+                    output_path=output_path,
+                    session_string=session_string
+                )
 
         max_peak = photometry_data.calculate_max_peak()
         auc      = photometry_data.calculate_auc(-event_window_prior,
@@ -703,6 +725,10 @@ def process_files(file_sheet_path, event_sheet_path, output_options,
                       (config['ABET'].get('exclusion_list') or '').split(',')
                       if i.strip()]
 
+    output_path = ''
+    if 'Filepath' in config:
+        output_path = config['Filepath'].get('output_path', '')
+
     args_list = [
         (
             row.to_dict(), event_sheet_path, output_options,
@@ -713,7 +739,7 @@ def process_files(file_sheet_path, event_sheet_path, output_options,
             despike, despike_window, despike_threshold, cheby_ripple,
             fit_type, baseline_detrend, robust_fit, huber_epsilon,
             arpls_lambda, arpls_max_iter, arpls_tol, arpls_eps, arpls_weight_scale,
-            exclusion_list, crop_start, crop_end,
+            exclusion_list, crop_start, crop_end, output_path,
         )
         for _, row in file_pair_df.iterrows()
     ]
