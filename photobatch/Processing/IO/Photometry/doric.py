@@ -260,9 +260,21 @@ def load_doric_data_h5(filepath, ch1_col, ch2_col, ttl_col, mode=''):
         min_time = min(iso_time.min(), act_time.min())
         max_time = max(iso_time.max(), act_time.max())
         adj_time = np.linspace(min_time, max_time, num=max(len(iso_time), len(act_time)))
+        
+        iso_data_interp = np.interp(adj_time, iso_time, iso_data)
+        act_data_interp = np.interp(adj_time, act_time, act_data)
+        
+        iso_time_adj = adj_time
+        act_time_adj = adj_time
+    else:
+        iso_time_adj = iso_time
+        act_time_adj = act_time
+        iso_data_interp = iso_data
+        act_data_interp = act_data
+        adj_time = None
 
-    doric_pd = pd.DataFrame({'Time': adj_time, 'Iso_Time': iso_time, 'Control': iso_data, 'Active_Time': act_time,
-                             'Active': act_data}).astype('float')
+    doric_pd = pd.DataFrame({'Time': adj_time, 'Iso_Time': iso_time_adj, 'Control': iso_data_interp, 'Active_Time': act_time_adj,
+                             'Active': act_data_interp}).astype('float')
     ttl_pd   = pd.DataFrame({'Time': ttl_time, 'TTL': ttl_data}).astype('float')
 
     return doric_pd, ttl_pd
