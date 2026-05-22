@@ -122,15 +122,30 @@ def test_process_files_persists_results_to_hdf5(tmp_path, monkeypatch):
 
     monkeypatch.setattr(hdf_store, "get_default_results_path", lambda: hdf5_path)
 
+    config["Filepath"]["output_path"] = str(tmp_path)
+
     results_path = process_files(
         file_sheet_path=str(file_sheet_path),
         event_sheet_path=str(event_sheet_path),
-        output_options=[],
+        output_options=[1, 2, 3, 4, 5, 6, 7],
         config=config,
         num_workers=1,
     )
 
     assert Path(results_path).exists()
+
+    # Check for wide/CSV output files
+    output_dir = tmp_path / "Output"
+    assert output_dir.exists()
+    assert (output_dir / "SimpleZ-Mouse-1 2024-01-02 12-00-00 Display Image.csv").exists()
+    assert (output_dir / "TimedZ-Mouse-1 2024-01-02 12-00-00 Display Image.csv").exists()
+    assert (output_dir / "SimpleF-Mouse-1 2024-01-02 12-00-00 Display Image.csv").exists()
+    assert (output_dir / "TimedF-Mouse-1 2024-01-02 12-00-00 Display Image.csv").exists()
+    assert (output_dir / "Raw-Mouse-1 2024-01-02 12-00-00 Display Image.csv").exists()
+
+    # Check for Excel summary files
+    assert (tmp_path / "Display Image_Summary-SummaryZ-.xlsx").exists()
+    assert (tmp_path / "Display Image_Summary-SummaryF-.xlsx").exists()
 
     index_df = hdf_store.load_results_index(results_path)
     assert len(index_df) == 1
