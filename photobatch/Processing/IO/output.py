@@ -128,8 +128,7 @@ def write_summary(output_data, summary_string, output_path, session_string,
     output_string_list = ['SummaryZ', 'SummaryF', 'SummaryP']
     output_string = output_string_list[output_data - 1]
 
-    summary_path = (output_path + summary_string + 'Summary'
-                    + '-' + output_string + '-' + '.xlsx')
+    summary_path = str(Path(output_path) / f"{summary_string}Summary-{output_string}-.xlsx")
 
     if output_data in z_list:
         session_temp = partial_dataframe.transpose()
