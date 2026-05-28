@@ -127,7 +127,7 @@ class PhotometryPreviewWindow(QDialog):
         controls_form.addRow(self._despike_threshold_label, self.despike_threshold)
         
         self.fit_type = QComboBox()
-        self.fit_type.addItems(['linear', 'expodecay'])
+        self.fit_type.addItems(['linear', 'irls', 'expodecay', 'biexponential'])
         self.fit_type.setCurrentText(self.config['Signal_Fitting'].get('fit_type', 'linear'))
         controls_form.addRow("Fit Type:", self.fit_type)
         
@@ -2165,7 +2165,7 @@ class FiberPhotometryApp(QMainWindow):
                     value = self.config[section][key]
                     display_key = key.replace("_", " ")
                     fit_type_combo = QComboBox()
-                    fit_type_combo.addItems(['linear', 'expodecay'])
+                    fit_type_combo.addItems(['linear', 'irls', 'expodecay', 'biexponential'])
                     fit_type_combo.setCurrentText(str(value) if value is not None else 'linear')
                     group_layout.addRow(display_key, fit_type_combo)
                     setattr(self, f"{section}_fit_type_combobox", fit_type_combo)
