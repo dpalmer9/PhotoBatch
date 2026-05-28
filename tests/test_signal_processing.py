@@ -1,6 +1,7 @@
 import numpy as np
 
 from photobatch.Processing.Signal.filter import signal_filter
+from photobatch.Processing.Signal import fitting
 from photobatch.Processing.Signal.fitting import _arpls_drift_fit, signal_fit
 from photobatch.Processing.Signal.utilities import despike_signal
 
@@ -66,6 +67,43 @@ def test_signal_fit_expodecay_tracks_oscillatory_component():
     correlation = np.corrcoef(recovered, target)[0, 1]
 
     assert correlation > 0.9
+
+
+def test_signal_fit_irls_handles_outliers_better_than_plain_linear():
+    rng = np.random.default_rng(42)
+    control = np.linspace(0.0, 10.0, 500)
+    true_signal = 1.8 * control + 4.0
+    active = true_signal + rng.normal(0.0, 0.05, size=control.size)
+    outlier_idx = np.arange(0, control.size, 25)
+    active[outlier_idx] += 8.0
+    time = np.linspace(0.0, 50.0, control.size)
+
+    irls_result = signal_fit("irls", control, active, time)
+    linear_result = signal_fit("linear", control, active, time, robust_fit=False)
+
+    clean_mask = np.ones(control.size, dtype=bool)
+    clean_mask[outlier_idx] = False
+    irls_error = np.mean(np.abs(irls_result["DeltaF"].to_numpy()[clean_mask]))
+    linear_error = np.mean(np.abs(linear_result["DeltaF"].to_numpy()[clean_mask]))
+
+    assert irls_error < linear_error
+
+
+def test_signal_fit_biexponential_falls_back_gracefully_when_curve_fit_fails(monkeypatch):
+    time = np.linspace(0.0, 60.0, 1200)
+    control = 2.0 + 0.01 * time
+    active = control + 0.05 * np.sin(time)
+
+    def raise_curve_fit(*args, **kwargs):
+        raise RuntimeError("forced failure")
+
+    monkeypatch.setattr(fitting, "curve_fit", raise_curve_fit)
+
+    result = signal_fit("biexponential", control, active, time)
+
+    assert list(result.columns) == ["Time", "DeltaF"]
+    assert len(result) == len(time)
+    assert np.isfinite(result["DeltaF"]).all()
 
 
 def test_arpls_drift_fit_recovers_slow_baseline():
