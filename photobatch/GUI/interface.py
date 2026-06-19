@@ -7,21 +7,20 @@ import shutil
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
+from matplotlib.backends.backend_qt import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.backends.backend_qtagg import (
-    FigureCanvasQTAgg as FigureCanvas,
-    NavigationToolbar2QT as NavigationToolbar,
+    FigureCanvasQTAgg as FigureCanvas
 )
 from photobatch.config_manager import ConfigManager
-from PySide6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout,
+from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                                QPushButton, QLabel, QFileDialog, QLineEdit, QTableWidget,
                                QTableWidgetItem, QFormLayout, QMessageBox,
                                QGroupBox, QCheckBox, QHBoxLayout, QMenuBar, QComboBox,
                                QListWidget, QListWidgetItem, QListView, QSpinBox, QScrollArea,
-                               QStackedWidget, QGridLayout, QProgressBar, QStatusBar, QMenu,
+                               QStackedWidget, QProgressBar, QStatusBar, QMenu,
                                QTextEdit, QDialog)
 from PySide6.QtCore import Qt, QThread, Signal, QSize, QObject
-from PySide6.QtGui import QAction, QIcon, QFont, QCursor
-from functools import partial
+from PySide6.QtGui import QAction, QFont
 from photobatch.Processing import data_processor, hdf_store
 
 import logging
@@ -1367,7 +1366,8 @@ class FiberPhotometryApp(QMainWindow):
                     checkbox.setChecked(value)
                 else:
                     checkbox.setChecked(str(value).lower() in ('true', '1'))
-                advanced_group_layout.addRow(advanced_labels.get(key, key.replace("_", " ")), checkbox)
+                label_text = advanced_labels.get(key, key.replace("_", " "))
+                advanced_group_layout.addRow(label_text, checkbox)
                 setattr(self, widget_attr_name, checkbox)
             advanced_group_box.setLayout(advanced_group_layout)
             layout.addWidget(advanced_group_box)
@@ -2284,7 +2284,7 @@ class FiberPhotometryApp(QMainWindow):
         if not matched_results:
             self.canvas.axes.clear()
             self.canvas.draw()
-            QMessageBox.warning(self, "Data Not Found", f"No data matches the selected criteria or the data is empty.")
+            QMessageBox.warning(self, "Data Not Found", "No data matches the selected criteria or the data is empty.")
             return
 
         # Store first plot data so save functionality works as expected for simple cases
@@ -2842,7 +2842,6 @@ class FiberPhotometryApp(QMainWindow):
             QMessageBox.warning(self, "Error", "No template loaded, cannot update trial start stage.")
 
     def update_ui_from_config(self):
-        multibox_options = ['trial_start_stage', 'trial_end_stage', 'exclusion_list']
         for section in self.config.sections():
             for key in self.config[section]:
                 value = self.config[section][key]
