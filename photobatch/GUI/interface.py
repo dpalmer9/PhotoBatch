@@ -19,6 +19,7 @@ from photobatch.Processing import data_processor, hdf_store
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
 import numpy as np
 import matplotlib.pyplot as plt
 from PySide6.QtWidgets import QDialog
@@ -1319,6 +1320,27 @@ class FiberPhotometryApp(QMainWindow):
     def init_analysis_tab(self):
         layout = QVBoxLayout()
         layout.addWidget(QLabel("Configure Analysis Options and Run"))
+        if "Advanced_Analysis" in self.config:
+            advanced_group_box = QGroupBox("Advanced Analysis Selection")
+            advanced_group_layout = QFormLayout()
+            advanced_labels = {
+                'run_flmm': 'Run Functional Linear Mixed Model (FLMM)',
+                'run_glm_hmm': 'Run GLM-Hidden Markov Model (GLM-HMM)',
+                'run_moa_hmm': 'Run Mixture-of-Agents HMM (MoA-HMM)',
+            }
+            section_name = "Advanced_Analysis"
+            for key in self.config[section_name]:
+                value = self.config[section_name][key]
+                widget_attr_name = f"{section_name}_{key}_checkbox"
+                checkbox = QCheckBox()
+                if isinstance(value, bool):
+                    checkbox.setChecked(value)
+                else:
+                    checkbox.setChecked(str(value).lower() in ('true', '1'))
+                advanced_group_layout.addRow(advanced_labels.get(key, key.replace("_", " ")), checkbox)
+                setattr(self, widget_attr_name, checkbox)
+            advanced_group_box.setLayout(advanced_group_layout)
+            layout.addWidget(advanced_group_box)
         if "Output" in self.config:
             output_group_box = QGroupBox("Output")
             output_group_layout = QFormLayout()
@@ -1491,8 +1513,15 @@ class FiberPhotometryApp(QMainWindow):
         
         # Visualization mode selector
         self.vis_mode_select = QComboBox()
-        self.vis_mode_select.addItems(["Histogram", "Heatmap"])
+        self.vis_mode_select.addItems(["Histogram", "Heatmap", "Session Event Overlay"])
         self.vis_mode_select.currentTextChanged.connect(self._sync_visualization_treatment_options)
+        self.vis_mode_select.currentTextChanged.connect(self._update_visualization_mode_controls)
+
+        self._session_signal_type_label = QLabel("Signal Type:")
+        self.session_signal_type_select = QComboBox()
+        self.session_signal_type_select.addItems(["Raw", "Filtered", "Delta F/F"])
+        self._session_signal_type_label.setVisible(False)
+        self.session_signal_type_select.setVisible(False)
         
         # Color Scheme selector
         self.vis_color_scheme = QComboBox()
@@ -1519,12 +1548,23 @@ class FiberPhotometryApp(QMainWindow):
         display_layout.addWidget(QLabel("Color Scheme:"), 0)
         display_layout.addWidget(self.vis_color_scheme, 1)
         controls_layout.addRow("Display Options:", display_layout)
+
+        signal_type_layout = QHBoxLayout()
+        signal_type_layout.addWidget(self._session_signal_type_label)
+        signal_type_layout.addWidget(self.session_signal_type_select, 1)
+        controls_layout.addRow("Session Overlay:", signal_type_layout)
         
-        generate_plot_button = QPushButton("Generate Plot")
-        generate_plot_button.clicked.connect(self.generate_plot)
+        self.generate_plot_button = QPushButton("Generate Plot")
+        self.generate_plot_button.clicked.connect(self.generate_plot)
+
+        self.session_overlay_notice = QLabel("")
+        self.session_overlay_notice.setWordWrap(True)
+        self.session_overlay_notice.setStyleSheet("color: #f38ba8;")
+        self.session_overlay_notice.hide()
         
         layout.addLayout(controls_layout)
-        layout.addWidget(generate_plot_button)
+        layout.addWidget(self.generate_plot_button)
+        layout.addWidget(self.session_overlay_notice)
         
         self.canvas = MatplotlibCanvas(self, width=5, height=4, dpi=100)
         self.toolbar = NavigationToolbar(self.canvas, self)
@@ -1547,6 +1587,10 @@ class FiberPhotometryApp(QMainWindow):
         self.visualization_tab.setLayout(layout)
 
         self._sync_visualization_treatment_options()
+        self.vis_animal_select.list_widget.itemChanged.connect(self._update_visualization_mode_controls)
+        self.vis_date_select.list_widget.itemChanged.connect(self._update_visualization_mode_controls)
+        self.vis_date_mode.currentTextChanged.connect(self._update_visualization_mode_controls)
+        self._update_visualization_mode_controls()
 
     def _sync_visualization_treatment_options(self):
         """Keep visualization treatment options compatible with the selected plot mode."""
@@ -1567,6 +1611,169 @@ class FiberPhotometryApp(QMainWindow):
             combo.addItems(valid_options)
             combo.setCurrentText(current_value if current_value in valid_options else "Combine")
             combo.blockSignals(False)
+
+    def _get_checked_multiselect_items(self, combo_widget):
+        if combo_widget is None or not hasattr(combo_widget, 'get_checked_items'):
+            return []
+        return [str(value) for value in combo_widget.get_checked_items() if str(value)]
+
+    def _expand_multiselect_selection(self, combo_widget, selected_values):
+        if combo_widget is None:
+            return []
+        if 'All' in selected_values:
+            return [
+                str(combo_widget.list_widget.item(i).text())
+                for i in range(combo_widget.list_widget.count())
+                if str(combo_widget.list_widget.item(i).text()) not in ['All', 'Combined']
+            ]
+        return [str(value) for value in selected_values if str(value) not in ['Combined']]
+
+    def _clear_visualization_canvas(self):
+        if hasattr(self, 'canvas') and hasattr(self.canvas, 'figure'):
+            self.canvas.figure.clf()
+            self.canvas.draw()
+
+    def _update_visualization_mode_controls(self, *_):
+        if not hasattr(self, 'vis_mode_select'):
+            return
+
+        is_session_overlay = self.vis_mode_select.currentText() == "Session Event Overlay"
+        self._session_signal_type_label.setVisible(is_session_overlay)
+        self.session_signal_type_select.setVisible(is_session_overlay)
+
+        for combo_name in ['vis_animal_treatment', 'vis_date_treatment', 'vis_behavior_treatment']:
+            combo = getattr(self, combo_name, None)
+            if combo is not None:
+                combo.setEnabled(not is_session_overlay)
+
+        if not is_session_overlay:
+            self.session_overlay_notice.hide()
+            if hasattr(self, 'generate_plot_button'):
+                self.generate_plot_button.setEnabled(True)
+            return
+
+        selected_animals = self._expand_multiselect_selection(self.vis_animal_select, self._get_checked_multiselect_items(self.vis_animal_select))
+        selected_dates = self._expand_multiselect_selection(self.vis_date_select, self._get_checked_multiselect_items(self.vis_date_select))
+        valid_selection = len(selected_animals) == 1 and len(selected_dates) == 1
+
+        if hasattr(self, 'generate_plot_button'):
+            self.generate_plot_button.setEnabled(valid_selection)
+
+        if valid_selection:
+            self.session_overlay_notice.hide()
+        else:
+            self.session_overlay_notice.setText(
+                "Session Event Overlay is only available for single-session selections (1 Animal ID and 1 Date/Session)."
+            )
+            self.session_overlay_notice.show()
+            self._clear_visualization_canvas()
+
+    def _resolve_selected_date_mask(self, working_df, selected_dates, mode):
+        if mode == "First/Last":
+            first_last_map = self._build_first_last_map(working_df)
+            display_date = working_df['datetime'].where(working_df['datetime'].str.len() > 0, working_df['date'])
+            working_df = working_df.copy()
+            working_df['selected_date_value'] = ''
+            if 'First' in selected_dates:
+                first_mask = display_date == working_df['animal_id'].map(lambda animal: first_last_map.get(str(animal), {}).get('First'))
+                working_df.loc[first_mask, 'selected_date_value'] = 'First'
+            if 'Last' in selected_dates:
+                last_mask = display_date == working_df['animal_id'].map(lambda animal: first_last_map.get(str(animal), {}).get('Last'))
+                working_df.loc[last_mask, 'selected_date_value'] = 'Last'
+            return working_df[working_df['selected_date_value'].str.len() > 0]
+
+        working_df = working_df.copy()
+        if mode == "Date":
+            working_df['selected_date_value'] = working_df['date']
+        elif mode == "Date Time":
+            working_df['selected_date_value'] = working_df['datetime'].where(working_df['datetime'].str.len() > 0, working_df['date'])
+        else:
+            working_df['selected_date_value'] = working_df['session'].where(working_df['session'].str.len() > 0, working_df['date'])
+        return working_df[working_df['selected_date_value'].isin(selected_dates)]
+
+    def _build_session_store_id(self, animal_id, date_value, fallback='session'):
+        cleaned_parts = [str(part).strip().replace('/', '-').replace('\\', '-') for part in (animal_id, date_value) if part]
+        return '_'.join(cleaned_parts) if cleaned_parts else fallback
+
+    def _plot_session_event_overlay(self, working_df, selected_behaviors, cmap):
+        if working_df.empty:
+            self._clear_visualization_canvas()
+            self.session_overlay_notice.setText("No session data matches the selected Animal ID and Date/Session.")
+            self.session_overlay_notice.show()
+            return
+
+        session_row = working_df.iloc[0]
+        session_id = self._build_session_store_id(session_row.get('animal_id'), session_row.get('date'), fallback='session')
+        try:
+            session_payload = hdf_store.load_session_traces(self.results_hdf5_path, session_id)
+        except Exception as exc:
+            self._clear_visualization_canvas()
+            self.session_overlay_notice.setText(f"Failed to load session trace data: {exc}")
+            self.session_overlay_notice.show()
+            return
+
+        trace_table = session_payload.get('trace_table', pd.DataFrame())
+        event_table = session_payload.get('event_table', pd.DataFrame())
+        if not isinstance(trace_table, pd.DataFrame) or trace_table.empty:
+            self._clear_visualization_canvas()
+            self.session_overlay_notice.setText("No continuous trace data is available for the selected session.")
+            self.session_overlay_notice.show()
+            return
+
+        signal_column = {
+            'Raw': 'Raw_Active',
+            'Filtered': 'Filtered_Active',
+            'Delta F/F': 'DeltaF',
+        }.get(self.session_signal_type_select.currentText(), 'DeltaF')
+        if signal_column not in trace_table.columns:
+            self._clear_visualization_canvas()
+            self.session_overlay_notice.setText(f"The selected signal type is not available for this session ({signal_column}).")
+            self.session_overlay_notice.show()
+            return
+
+        filtered_events = event_table.copy() if isinstance(event_table, pd.DataFrame) else pd.DataFrame()
+        if not filtered_events.empty:
+            if 'event_type' not in filtered_events.columns and 'event_alias' in filtered_events.columns:
+                filtered_events['event_type'] = filtered_events['event_alias'].astype(str)
+            if 'time' not in filtered_events.columns and 'Start_Time' in filtered_events.columns:
+                filtered_events['time'] = pd.to_numeric(filtered_events['Start_Time'], errors='coerce')
+            filtered_events = filtered_events.dropna(subset=['time']) if 'time' in filtered_events.columns else pd.DataFrame()
+            if selected_behaviors:
+                filtered_events = filtered_events[filtered_events['event_type'].astype(str).isin(selected_behaviors)]
+
+        self.canvas.figure.clf()
+        ax = self.canvas.figure.add_subplot(111)
+        self.canvas.axes = ax
+
+        time_axis = pd.to_numeric(trace_table['Time'], errors='coerce').to_numpy(dtype=float, copy=False)
+        signal_values = pd.to_numeric(trace_table[signal_column], errors='coerce').to_numpy(dtype=float, copy=False)
+        ax.plot(time_axis, signal_values, color='#89b4fa', linewidth=1.6, label=f"{self.session_signal_type_select.currentText()} Signal")
+
+        legend_handles = [Line2D([0], [0], color='#89b4fa', linewidth=1.6)]
+        legend_labels = [f"{self.session_signal_type_select.currentText()} Signal"]
+        if not filtered_events.empty:
+            unique_events = [str(value) for value in pd.unique(filtered_events['event_type'].astype(str))]
+            cmap_size = getattr(cmap, 'N', max(len(unique_events), 1))
+            for color_index, event_name in enumerate(unique_events):
+                event_color = cmap(color_index % cmap_size)
+                event_times = pd.to_numeric(
+                    filtered_events.loc[filtered_events['event_type'].astype(str) == event_name, 'time'],
+                    errors='coerce',
+                ).dropna()
+                for event_time in event_times:
+                    ax.axvline(float(event_time), color=event_color, linestyle='--', alpha=0.75, linewidth=1.0)
+                legend_handles.append(Line2D([0], [0], color=event_color, linestyle='--', linewidth=1.5))
+                legend_labels.append(event_name)
+
+        ax.legend(legend_handles, legend_labels, loc='upper right')
+        ax.set_xlabel('Time (s)')
+        ax.set_ylabel(self.session_signal_type_select.currentText())
+        ax.set_title(f"Session Event Overlay - {session_row.get('animal_id', '')} - {session_row.get('date', '')}")
+
+        self.plot_data = trace_table[['Time', signal_column]].copy()
+        self.canvas.figure.tight_layout()
+        self.canvas.draw()
+        self.session_overlay_notice.hide()
 
     def _result_index_with_animals(self):
         index_df = self._load_results_index().copy()
@@ -1653,6 +1860,7 @@ class FiberPhotometryApp(QMainWindow):
         selected_animals = self.vis_animal_select.get_checked_items() if hasattr(self, 'vis_animal_select') else []
         index_df = self._result_index_with_animals()
         if not selected_animals or index_df.empty:
+            self._update_visualization_mode_controls()
             return
         
         mode = self.vis_date_mode.currentText() if hasattr(self, 'vis_date_mode') else "Date"
@@ -1662,6 +1870,7 @@ class FiberPhotometryApp(QMainWindow):
             self.vis_date_select.add_option('First')
             self.vis_date_select.add_option('Last')
             self.update_vis_behavior_select()
+            self._update_visualization_mode_controls()
             return
 
         if 'All' not in selected_animals:
@@ -1681,6 +1890,7 @@ class FiberPhotometryApp(QMainWindow):
         for d in sorted_dates:
             self.vis_date_select.add_option(str(d))
         self.update_vis_behavior_select()
+        self._update_visualization_mode_controls()
 
     def update_results_date_select(self, animal: str):
         """Populate the results date select when the results animal selection changes."""
@@ -1809,6 +2019,7 @@ class FiberPhotometryApp(QMainWindow):
         index_df = self._result_index_with_animals()
         
         if not selected_animals or not selected_dates or index_df.empty:
+            self._update_visualization_mode_controls()
             return
 
         mode = self.vis_date_mode.currentText() if hasattr(self, 'vis_date_mode') else "Date"
@@ -1828,6 +2039,7 @@ class FiberPhotometryApp(QMainWindow):
             self.vis_behavior_select.add_option('All')
             for b in behaviors:
                 self.vis_behavior_select.add_option(str(b))
+            self._update_visualization_mode_controls()
             return
 
         if mode == "Date":
@@ -1847,29 +2059,19 @@ class FiberPhotometryApp(QMainWindow):
 
     def generate_plot(self):
         # Extract selections from MultiSelectComboBox
-        selected_animals = self.vis_animal_select.get_checked_items() if hasattr(self, 'vis_animal_select') else []
-        selected_dates = self.vis_date_select.get_checked_items() if hasattr(self, 'vis_date_select') else []
-        selected_behaviors = self.vis_behavior_select.get_checked_items() if hasattr(self, 'vis_behavior_select') else []
+        vis_mode = self.vis_mode_select.currentText().lower() if hasattr(self, 'vis_mode_select') else 'histogram'
+        selected_animals = self._get_checked_multiselect_items(self.vis_animal_select) if hasattr(self, 'vis_animal_select') else []
+        selected_dates = self._get_checked_multiselect_items(self.vis_date_select) if hasattr(self, 'vis_date_select') else []
+        selected_behaviors = self._get_checked_multiselect_items(self.vis_behavior_select) if hasattr(self, 'vis_behavior_select') else []
         
-        if not selected_behaviors:
+        if vis_mode != 'session event overlay' and not selected_behaviors:
             QMessageBox.warning(self, "Selection Error", "Please select at least one behavior to plot.")
             return
             
         # Expand 'All' selections to represent all unique values
-        if 'All' in selected_animals:
-            selected_animals = [str(self.vis_animal_select.list_widget.item(i).text()) 
-                                for i in range(self.vis_animal_select.list_widget.count()) 
-                                if str(self.vis_animal_select.list_widget.item(i).text()) not in ['All', 'Combined']]
-                                
-        if 'All' in selected_dates:
-            selected_dates = [str(self.vis_date_select.list_widget.item(i).text()) 
-                              for i in range(self.vis_date_select.list_widget.count()) 
-                              if str(self.vis_date_select.list_widget.item(i).text()) not in ['All', 'Combined']]
-                              
-        if 'All' in selected_behaviors:
-            selected_behaviors = [str(self.vis_behavior_select.list_widget.item(i).text()) 
-                                  for i in range(self.vis_behavior_select.list_widget.count()) 
-                                  if str(self.vis_behavior_select.list_widget.item(i).text()) not in ['All', 'Combined']]
+        selected_animals = self._expand_multiselect_selection(self.vis_animal_select, selected_animals)
+        selected_dates = self._expand_multiselect_selection(self.vis_date_select, selected_dates)
+        selected_behaviors = self._expand_multiselect_selection(self.vis_behavior_select, selected_behaviors)
 
         index_df = self._result_index_with_animals()
         if index_df.empty:
@@ -1882,7 +2084,6 @@ class FiberPhotometryApp(QMainWindow):
         except ValueError:
             event_prior, event_follow = 5.0, 10.0
 
-        vis_mode = self.vis_mode_select.currentText().lower() if hasattr(self, 'vis_mode_select') else 'histogram'
         color_scheme = self.vis_color_scheme.currentText().lower() if hasattr(self, 'vis_color_scheme') else 'default'
         
         if color_scheme == "default":
@@ -1909,28 +2110,23 @@ class FiberPhotometryApp(QMainWindow):
         mode = self.vis_date_mode.currentText() if hasattr(self, 'vis_date_mode') else "Date"
 
         working_df = index_df[index_df['animal_id'].isin(selected_animals)].copy()
-        working_df = working_df[working_df['behavior'].isin(selected_behaviors)]
+        working_df = self._resolve_selected_date_mask(working_df, selected_dates, mode)
 
-        if mode == "First/Last":
-            first_last_map = self._build_first_last_map(working_df)
-            display_date = working_df['datetime'].where(working_df['datetime'].str.len() > 0, working_df['date'])
-            working_df['selected_date_value'] = ''
-            if 'First' in selected_dates:
-                first_mask = display_date == working_df['animal_id'].map(lambda animal: first_last_map.get(str(animal), {}).get('First'))
-                working_df.loc[first_mask, 'selected_date_value'] = 'First'
-            if 'Last' in selected_dates:
-                last_mask = display_date == working_df['animal_id'].map(lambda animal: first_last_map.get(str(animal), {}).get('Last'))
-                working_df.loc[last_mask, 'selected_date_value'] = 'Last'
-            working_df = working_df[working_df['selected_date_value'].str.len() > 0]
-        elif mode == "Date":
-            working_df['selected_date_value'] = working_df['date']
-            working_df = working_df[working_df['selected_date_value'].isin(selected_dates)]
-        elif mode == "Date Time":
-            working_df['selected_date_value'] = working_df['datetime'].where(working_df['datetime'].str.len() > 0, working_df['date'])
-            working_df = working_df[working_df['selected_date_value'].isin(selected_dates)]
-        else:
-            working_df['selected_date_value'] = working_df['session'].where(working_df['session'].str.len() > 0, working_df['date'])
-            working_df = working_df[working_df['selected_date_value'].isin(selected_dates)]
+        if vis_mode == 'session event overlay':
+            if len(selected_animals) != 1 or len(selected_dates) != 1:
+                self.generate_plot_button.setEnabled(False)
+                self._clear_visualization_canvas()
+                self.session_overlay_notice.setText(
+                    "Session Event Overlay is only available for single-session selections (1 Animal ID and 1 Date/Session)."
+                )
+                self.session_overlay_notice.show()
+                return
+            if selected_behaviors:
+                working_df = working_df[working_df['behavior'].isin(selected_behaviors)]
+            self._plot_session_event_overlay(working_df, selected_behaviors, cmap)
+            return
+
+        working_df = working_df[working_df['behavior'].isin(selected_behaviors)]
 
         grouped_raw_results = {}
         plot_data_map = hdf_store.load_plot_data_map(self.results_hdf5_path, working_df['result_id'].tolist())
@@ -2148,7 +2344,7 @@ class FiberPhotometryApp(QMainWindow):
             side_combo.blockSignals(False)
 
         for section in self.config.sections():
-            if section in ('Output', 'Vendors'):
+            if section in ('Output', 'Vendors', 'Advanced_Analysis'):
                 continue
             group_box = QGroupBox(section.replace("_", " "))
             group_layout = QFormLayout()
