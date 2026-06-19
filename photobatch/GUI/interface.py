@@ -9,20 +9,27 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget, Q
                                QTableWidgetItem, QFormLayout, QMessageBox,
                                QGroupBox, QCheckBox, QHBoxLayout, QMenuBar, QComboBox,
                                QListWidget, QListWidgetItem, QListView, QSpinBox, QScrollArea,
-                               QStackedWidget, QGridLayout, QProgressBar, QStatusBar, QMenu)
-from PySide6.QtCore import Qt, QThread, Signal, QSize
+                               QStackedWidget, QGridLayout, QProgressBar, QStatusBar, QMenu,
+                               QTextEdit)
+from PySide6.QtCore import Qt, QThread, Signal, QSize, QObject
 from PySide6.QtGui import QAction, QIcon, QFont, QCursor
 from functools import partial
 from photobatch.Processing import data_processor, hdf_store
 
-# type: ignore
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.backends.backend_qt import NavigationToolbar2QT as NavigationToolbar
-from matplotlib.figure import Figure
-from matplotlib.lines import Line2D
-import numpy as np
-import matplotlib.pyplot as plt
-from PySide6.QtWidgets import QDialog
+import logging
+from html import escape
+
+class LogSignaler(QObject):
+    log_signal = Signal(str, str)
+
+class QLogHandler(logging.Handler):
+    def __init__(self, signaler):
+        super().__init__()
+        self.signaler = signaler
+
+    def emit(self, record):
+        msg = self.format(record)
+        self.signaler.log_signal.emit(msg, record.levelname)
 
 QT_ITEM_IS_EDITABLE = Qt.ItemFlag.ItemIsEditable
 QT_ITEM_IS_USER_CHECKABLE = Qt.ItemFlag.ItemIsUserCheckable
@@ -476,6 +483,7 @@ class AnalysisThread(QThread):
     """
     results_ready = Signal(str)
     error_occurred = Signal(str)
+    progress_updated = Signal(int, int)
 
     def __init__(self, file_pair_path, event_sheet_path, output_selections,
                  config, num_workers, parent=None):
@@ -487,13 +495,17 @@ class AnalysisThread(QThread):
         self.num_workers = num_workers
 
     def run(self):
+        def progress_cb(completed, total):
+            self.progress_updated.emit(completed, total)
+
         try:
             hdf5_path = data_processor.process_files(
                 self.file_pair_path,
                 self.event_sheet_path,
                 self.output_selections,
                 self.config,
-                self.num_workers
+                self.num_workers,
+                progress_callback=progress_cb
             )
             self.results_ready.emit(hdf5_path)
         except Exception as e:
@@ -564,6 +576,16 @@ class FiberPhotometryApp(QMainWindow):
         # After all UI tabs/widgets are initialized, load any default file paths from the config
         # and auto-populate the event and file-pair tables if valid file paths are provided.
         self.load_defaults_from_config()
+
+        # Logging redirection setup
+        self.log_signaler = LogSignaler()
+        self.log_signaler.log_signal.connect(self.append_console_message)
+        self.log_handler = QLogHandler(self.log_signaler)
+        self.log_handler.setFormatter(logging.Formatter(
+            "%(asctime)s - %(levelname)s - %(message)s",
+            datefmt="%H:%M:%S"
+        ))
+        logging.getLogger("photobatch").addHandler(self.log_handler)
 
     def add_sidebar_tab(self, widget, name):
         self.stacked_widget.addWidget(widget)
@@ -1359,9 +1381,51 @@ class FiberPhotometryApp(QMainWindow):
             output_group_box.setLayout(output_group_layout)
             layout.addWidget(output_group_box)
         layout.addStretch(1)
+
         self.run_analysis_button = QPushButton("Run Analysis")
         self.run_analysis_button.clicked.connect(self.run_analysis_action)
         layout.addWidget(self.run_analysis_button)
+
+        self.analysis_progress_bar = QProgressBar()
+        self.analysis_progress_bar.setRange(0, 100)
+        self.analysis_progress_bar.setValue(0)
+        self.analysis_progress_bar.setTextVisible(True)
+        self.analysis_progress_bar.setFormat("0/0 (0%)")
+        self.analysis_progress_bar.setStyleSheet("""
+            QProgressBar {
+                border: 1px solid #45475a;
+                border-radius: 4px;
+                text-align: center;
+                background-color: #313244;
+                color: #cdd6f4;
+                font-weight: bold;
+                height: 24px;
+            }
+            QProgressBar::chunk {
+                background-color: #a6e3a1;
+                border-radius: 3px;
+            }
+        """)
+        layout.addWidget(self.analysis_progress_bar)
+
+        layout.addWidget(QLabel("Analysis Console Logs"))
+        self.console_text = QTextEdit()
+        self.console_text.setReadOnly(True)
+        self.console_text.setPlaceholderText("Console logs will appear here...")
+        self.console_text.setStyleSheet("""
+            QTextEdit {
+                background-color: #11111b;
+                color: #cdd6f4;
+                font-family: 'Fira Code', 'Courier New', monospace;
+                font-size: 12px;
+                border: 1px solid #45475a;
+                border-radius: 4px;
+            }
+        """)
+        self.console_text.setMinimumHeight(150)
+        self.console_text.setMaximumHeight(250)
+        layout.addWidget(self.console_text)
+
         self.analysis_tab.setLayout(layout)
 
     def run_analysis_action(self):
@@ -1374,6 +1438,22 @@ class FiberPhotometryApp(QMainWindow):
         if not os.path.exists(event_sheet_path) or not os.path.exists(file_pair_path):
             QMessageBox.warning(self, "Error", "Please select valid event and file pair sheets.")
             return
+
+        total_jobs = 0
+        if os.path.exists(file_pair_path):
+            try:
+                df = pd.read_csv(file_pair_path)
+                total_jobs = len(df)
+            except Exception:
+                total_jobs = 0
+
+        self.console_text.clear()
+        self.append_console_message("Starting analysis...", "INFO")
+        self.append_console_message(f"Found {total_jobs} file pairs to process.", "INFO")
+
+        self.analysis_progress_bar.setRange(0, total_jobs)
+        self.analysis_progress_bar.setValue(0)
+        self.analysis_progress_bar.setFormat(f"0/{total_jobs} (0%)")
 
         section_name = "Output"
         output_selections = []
@@ -1402,7 +1482,7 @@ class FiberPhotometryApp(QMainWindow):
         )
         self._analysis_thread.results_ready.connect(self._on_analysis_complete)
         self._analysis_thread.error_occurred.connect(self._on_analysis_error)
-        self.progress_bar.show()
+        self._analysis_thread.progress_updated.connect(self._on_progress_updated)
         self.status_bar.showMessage("Running Analysis...")
         self._analysis_thread.start()
 
@@ -1410,18 +1490,44 @@ class FiberPhotometryApp(QMainWindow):
         """Called on the main thread when the analysis worker finishes."""
         self.run_analysis_button.setEnabled(True)
         self.run_analysis_button.setText("Run Analysis")
-        self.progress_bar.hide()
+        self.analysis_progress_bar.setValue(self.analysis_progress_bar.maximum())
         self.status_bar.showMessage("Analysis Complete")
+        self.append_console_message(f"Analysis complete. Results written to: {hdf5_path}", "INFO")
         self.set_results_store(hdf5_path, f"Analysis complete. Results were written to:\n{hdf5_path}")
 
     def _on_analysis_error(self, error_msg):
         """Called on the main thread when the analysis worker raises an exception."""
         self.run_analysis_button.setEnabled(True)
         self.run_analysis_button.setText("Run Analysis")
-        self.progress_bar.hide()
         self.status_bar.showMessage("Analysis Error")
+        self.append_console_message(f"Analysis error: {error_msg}", "ERROR")
         QMessageBox.critical(self, "Analysis Error",
                              f"An error occurred during analysis:\n{error_msg}")
+
+    def _on_progress_updated(self, completed, total):
+        self.analysis_progress_bar.setRange(0, total)
+        self.analysis_progress_bar.setValue(completed)
+        self.analysis_progress_bar.setFormat("%v/%m (%p%)")
+
+    def append_console_message(self, message, level):
+        escaped_message = escape(message)
+        level_upper = level.upper()
+        if "ERROR" in level_upper:
+            color = "#f38ba8"
+            prefix = "[ERROR] "
+        elif "WARN" in level_upper:
+            color = "#f9e2af"
+            prefix = "[WARNING] "
+        elif "INFO" in level_upper:
+            color = "#a6e3a1"
+            prefix = "[INFO] "
+        else:
+            color = "#cdd6f4"
+            prefix = ""
+        html = f"<span style='color: {color};'>{prefix}{escaped_message}</span>"
+        self.console_text.append(html)
+        scrollbar = self.console_text.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
 
     def update_results_and_visualization_options(self):
         # Refresh animal/date selectors and results table
