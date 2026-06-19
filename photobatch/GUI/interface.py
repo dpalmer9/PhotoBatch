@@ -1,8 +1,16 @@
 import sys
 import pandas as pd
+import numpy as np
 import os
 import pickle
 import shutil
+import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
+from matplotlib.backends.backend_qtagg import (
+    FigureCanvasQTAgg as FigureCanvas,
+    NavigationToolbar2QT as NavigationToolbar,
+)
 from photobatch.config_manager import ConfigManager
 from PySide6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout,
                                QPushButton, QLabel, QFileDialog, QLineEdit, QTableWidget,
@@ -10,7 +18,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget, Q
                                QGroupBox, QCheckBox, QHBoxLayout, QMenuBar, QComboBox,
                                QListWidget, QListWidgetItem, QListView, QSpinBox, QScrollArea,
                                QStackedWidget, QGridLayout, QProgressBar, QStatusBar, QMenu,
-                               QTextEdit)
+                               QTextEdit, QDialog)
 from PySide6.QtCore import Qt, QThread, Signal, QSize, QObject
 from PySide6.QtGui import QAction, QIcon, QFont, QCursor
 from functools import partial
