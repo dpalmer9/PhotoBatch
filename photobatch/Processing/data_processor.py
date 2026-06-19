@@ -1,7 +1,5 @@
 # Imports
 import os
-import io
-import csv
 import logging
 import dateutil.parser
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -20,16 +18,14 @@ from photobatch.exceptions import (
 )
 from photobatch.Processing.IO import BEHAVIOUR_REGISTRY, SIGNAL_REGISTRY, SYNC_REGISTRY
 from photobatch.Processing.IO.Behaviour.abet import (
-    abet_extract_information,
     abet_trial_definition as _abet_trial_definition,
     abet_search_event as _abet_search_event,
 )
 from photobatch.Processing.IO.output import write_data as _write_data, write_summary as _write_summary
-from photobatch.Processing.Signal.utilities import despike_signal, crop_signal
+from photobatch.Processing.Signal.utilities import crop_signal
 from photobatch.Processing.Signal.filter import signal_filter as _signal_filter
 from photobatch.Processing.Signal.fitting import signal_fit as _signal_fit
 from photobatch.Processing.Process.event import (
-    extract_trial_data,
     trial_separator as _trial_separator,
     calculate_max_peak as _calculate_max_peak,
     calculate_auc as _calculate_auc,
