@@ -184,7 +184,8 @@ def load_doric_data_h5(filepath, ch1_col, ch2_col, ttl_col, mode=''):
         ch2_out = 'LockInAOUT' + str(ch2_col).split(',')[1].rjust(2, '0')
         ttl_in  = 'AIN'        + str(ttl_col).rjust(2, '0')
 
-        lock_time = iso_data = act_data = None
+        iso_data = act_data = None
+        iso_time = act_time = None
         for key in dataset_keys:
             if ch1_out in key:
                 key_data = doric_dataset[ch1_out]
@@ -213,7 +214,8 @@ def load_doric_data_h5(filepath, ch1_col, ch2_col, ttl_col, mode=''):
         ch2_out = 'LockInAOUT' + str(ch2_col).split(',')[1].rjust(2, '0')
         ttl_in  = 'AIN'        + str(ttl_col).rjust(2, '0')
 
-        lock_time = iso_data = act_data = None
+        iso_data = act_data = None
+        iso_time = act_time = None
         for key in dataset_keys:
             if ch1_in in key and ch1_out in key:
                 iso_dataset = doric_dataset[key]
