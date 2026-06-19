@@ -17,7 +17,6 @@ arpls / ar_pls / ar-pls
     Asymmetrically Reweighted Penalised Least Squares (Baek et al. 2015).
 """
 
-import gc
 import logging
 
 import numpy as np
@@ -385,5 +384,4 @@ def signal_fit(
 
     result_pd = pd.DataFrame({'Time': time_data, 'DeltaF': delta_f})
 
-    gc.collect()
     return result_pd

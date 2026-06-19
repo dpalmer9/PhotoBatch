@@ -1,10 +1,9 @@
 # Imports
 import os
-import io
-import csv
 import logging
 import dateutil.parser
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
@@ -20,16 +19,14 @@ from photobatch.exceptions import (
 )
 from photobatch.Processing.IO import BEHAVIOUR_REGISTRY, SIGNAL_REGISTRY, SYNC_REGISTRY
 from photobatch.Processing.IO.Behaviour.abet import (
-    abet_extract_information,
     abet_trial_definition as _abet_trial_definition,
     abet_search_event as _abet_search_event,
 )
 from photobatch.Processing.IO.output import write_data as _write_data, write_summary as _write_summary
-from photobatch.Processing.Signal.utilities import despike_signal, crop_signal
+from photobatch.Processing.Signal.utilities import crop_signal
 from photobatch.Processing.Signal.filter import signal_filter as _signal_filter
 from photobatch.Processing.Signal.fitting import signal_fit as _signal_fit
 from photobatch.Processing.Process.event import (
-    extract_trial_data,
     trial_separator as _trial_separator,
     calculate_max_peak as _calculate_max_peak,
     calculate_auc as _calculate_auc,
@@ -475,77 +472,94 @@ PhotometryData = SignalEventData
 # Per-file worker  (used by ProcessPoolExecutor)
 # ---------------------------------------------------------------------------
 
-def _process_single_file(args):
+@dataclass
+class FileJob:
+    """Picklable bundle of one file pair's processing parameters.
+
+    Passed to :func:`_process_single_file`.  Advanced-analysis flags and the
+    output path carry defaults so callers may omit them.
+    """
+    row_dict: dict
+    event_sheet_path: str
+    output_options: list
+    event_window_prior: float
+    event_window_follow: float
+    trial_start_stage: list
+    trial_end_stage: list
+    iti_prior_trial: float
+    center_z: str
+    center_method: str
+    scale_median: bool
+    normalize_side: str
+    filter_type: str
+    filter_name: str
+    filter_order: int
+    filter_cutoff: float
+    despike: bool
+    despike_window: int
+    despike_threshold: float
+    cheby_ripple: float
+    fit_type: str
+    baseline_detrend: object
+    robust_fit: bool
+    huber_epsilon: object
+    arpls_lambda: float
+    arpls_max_iter: int
+    arpls_tol: float
+    arpls_eps: float
+    arpls_weight_scale: float
+    exclusion_list: list = field(default_factory=list)
+    crop_start: float = 0.0
+    crop_end: float = 0.0
+    output_path: str = ''
+    run_flmm: bool = False
+    run_glm_hmm: bool = False
+    run_moa_hmm: bool = False
+
+
+def _process_single_file(job: 'FileJob'):
     """Module-level worker for ProcessPoolExecutor.
 
     Processes one ABET/Doric file pair across all events and returns a list
-    of per-event result dicts.  Accepts a single tuple so it is safely
-    picklable across process boundaries.
+    of per-event result dicts.  Accepts a single :class:`FileJob` so it is
+    safely picklable across process boundaries.
     """
-    if len(args) == 36:
-        (row_dict, event_sheet_path, output_options,
-         event_window_prior, event_window_follow,
-         trial_start_stage, trial_end_stage,
-         iti_prior_trial, center_z, center_method, scale_median, normalize_side,
-         filter_type, filter_name, filter_order, filter_cutoff,
-         despike, despike_window, despike_threshold, cheby_ripple,
-         fit_type, baseline_detrend, robust_fit, huber_epsilon,
-         arpls_lambda, arpls_max_iter, arpls_tol, arpls_eps, arpls_weight_scale,
-         run_flmm, run_glm_hmm, run_moa_hmm,
-         exclusion_list, crop_start, crop_end, output_path) = args
-    elif len(args) == 35:
-        (row_dict, event_sheet_path, output_options,
-         event_window_prior, event_window_follow,
-         trial_start_stage, trial_end_stage,
-         iti_prior_trial, center_z, center_method, scale_median, normalize_side,
-         filter_type, filter_name, filter_order, filter_cutoff,
-         despike, despike_window, despike_threshold, cheby_ripple,
-         fit_type, baseline_detrend, robust_fit, huber_epsilon,
-         arpls_lambda, arpls_max_iter, arpls_tol, arpls_eps, arpls_weight_scale,
-         run_flmm, run_glm_hmm,
-         exclusion_list, crop_start, crop_end, output_path) = args
-        run_moa_hmm = False
-    elif len(args) == 33:
-        (row_dict, event_sheet_path, output_options,
-         event_window_prior, event_window_follow,
-         trial_start_stage, trial_end_stage,
-         iti_prior_trial, center_z, center_method, scale_median, normalize_side,
-         filter_type, filter_name, filter_order, filter_cutoff,
-         despike, despike_window, despike_threshold, cheby_ripple,
-         fit_type, baseline_detrend, robust_fit, huber_epsilon,
-         arpls_lambda, arpls_max_iter, arpls_tol, arpls_eps, arpls_weight_scale,
-         exclusion_list, crop_start, crop_end) = args
-        run_flmm = False
-        run_glm_hmm = False
-        run_moa_hmm = False
-        output_path = ''
-    elif len(args) == 32:
-        (row_dict, event_sheet_path, output_options,
-         event_window_prior, event_window_follow,
-         trial_start_stage, trial_end_stage,
-         iti_prior_trial, center_z, center_method, scale_median, normalize_side,
-         filter_type, filter_name, filter_order, filter_cutoff,
-         despike, despike_window, despike_threshold, cheby_ripple,
-         fit_type, baseline_detrend, robust_fit, huber_epsilon,
-         arpls_lambda, arpls_max_iter, arpls_tol, arpls_eps, arpls_weight_scale,
-         exclusion_list, crop_start, crop_end) = args
-        run_flmm = False
-        run_glm_hmm = False
-        run_moa_hmm = False
-        output_path = ''
-    else:
-        (row_dict, event_sheet_path, output_options,
-         event_window_prior, event_window_follow,
-         trial_start_stage, trial_end_stage,
-         iti_prior_trial, center_z, center_method, scale_median, normalize_side,
-         filter_type, filter_name, filter_order, filter_cutoff,
-         despike, despike_window, despike_threshold, cheby_ripple,
-         fit_type, baseline_detrend, robust_fit, huber_epsilon,
-         arpls_lambda, arpls_max_iter, arpls_tol, arpls_eps, arpls_weight_scale,
-         exclusion_list, crop_start, crop_end, output_path) = args
-        run_flmm = False
-        run_glm_hmm = False
-        run_moa_hmm = False
+    row_dict = job.row_dict
+    event_sheet_path = job.event_sheet_path
+    output_options = job.output_options
+    event_window_prior = job.event_window_prior
+    event_window_follow = job.event_window_follow
+    trial_start_stage = job.trial_start_stage
+    trial_end_stage = job.trial_end_stage
+    iti_prior_trial = job.iti_prior_trial
+    center_z = job.center_z
+    center_method = job.center_method
+    scale_median = job.scale_median
+    normalize_side = job.normalize_side
+    filter_type = job.filter_type
+    filter_name = job.filter_name
+    filter_order = job.filter_order
+    filter_cutoff = job.filter_cutoff
+    despike = job.despike
+    despike_window = job.despike_window
+    despike_threshold = job.despike_threshold
+    cheby_ripple = job.cheby_ripple
+    fit_type = job.fit_type
+    baseline_detrend = job.baseline_detrend
+    robust_fit = job.robust_fit
+    huber_epsilon = job.huber_epsilon
+    arpls_lambda = job.arpls_lambda
+    arpls_max_iter = job.arpls_max_iter
+    arpls_tol = job.arpls_tol
+    arpls_eps = job.arpls_eps
+    arpls_weight_scale = job.arpls_weight_scale
+    exclusion_list = job.exclusion_list
+    crop_start = job.crop_start
+    crop_end = job.crop_end
+    output_path = job.output_path
+    run_flmm = job.run_flmm
+    run_glm_hmm = job.run_glm_hmm
+    run_moa_hmm = job.run_moa_hmm
 
     row = pd.Series(row_dict)
     file_results = []
@@ -920,17 +934,27 @@ def process_files(file_sheet_path, event_sheet_path, output_options,
         output_path = config['Filepath'].get('output_path', '')
 
     args_list = [
-        (
-            row.to_dict(), event_sheet_path, output_options,
-            event_window_prior, event_window_follow,
-            trial_start_stage, trial_end_stage,
-            iti_prior_trial, center_z, center_method, scale_median, normalize_side,
-            filter_type, filter_name, filter_order, filter_cutoff,
-            despike, despike_window, despike_threshold, cheby_ripple,
-            fit_type, baseline_detrend, robust_fit, huber_epsilon,
-            arpls_lambda, arpls_max_iter, arpls_tol, arpls_eps, arpls_weight_scale,
-            run_flmm, run_glm_hmm, run_moa_hmm,
-            exclusion_list, crop_start, crop_end, output_path,
+        FileJob(
+            row_dict=row.to_dict(), event_sheet_path=event_sheet_path,
+            output_options=output_options,
+            event_window_prior=event_window_prior,
+            event_window_follow=event_window_follow,
+            trial_start_stage=trial_start_stage, trial_end_stage=trial_end_stage,
+            iti_prior_trial=iti_prior_trial, center_z=center_z,
+            center_method=center_method, scale_median=scale_median,
+            normalize_side=normalize_side,
+            filter_type=filter_type, filter_name=filter_name,
+            filter_order=filter_order, filter_cutoff=filter_cutoff,
+            despike=despike, despike_window=despike_window,
+            despike_threshold=despike_threshold, cheby_ripple=cheby_ripple,
+            fit_type=fit_type, baseline_detrend=baseline_detrend,
+            robust_fit=robust_fit, huber_epsilon=huber_epsilon,
+            arpls_lambda=arpls_lambda, arpls_max_iter=arpls_max_iter,
+            arpls_tol=arpls_tol, arpls_eps=arpls_eps,
+            arpls_weight_scale=arpls_weight_scale,
+            exclusion_list=exclusion_list, crop_start=crop_start,
+            crop_end=crop_end, output_path=output_path,
+            run_flmm=run_flmm, run_glm_hmm=run_glm_hmm, run_moa_hmm=run_moa_hmm,
         )
         for _, row in file_pair_df.iterrows()
     ]
