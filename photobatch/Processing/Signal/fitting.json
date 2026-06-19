@@ -1,5 +1,5 @@
 {
-    "_description": "Signal baseline-fitting configuration. Co-located with Processing/Signal/fitting.py.",
+    "_description": "Signal baseline-fitting configuration. Co-located with Processing/Signal/fitting.py. fit_type choices: linear, irls, expodecay, biexponential.",
     "Signal_Fitting": {
         "fit_type": "linear",
         "baseline_detrend": "none",

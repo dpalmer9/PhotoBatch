@@ -7,6 +7,7 @@ from typing import Iterable
 import h5py
 import numpy as np
 import pandas as pd
+from pandas.api.types import is_numeric_dtype
 
 
 SCHEMA_VERSION = "1.0"
@@ -56,7 +57,12 @@ def initialize_results_file(hdf5_path: str | Path, metadata: dict | None = None)
         analysis_group = hdf5_file.require_group('analysis')
         analysis_group.require_group('entries')
         analysis_group.require_group('index')
+        advanced_group = analysis_group.require_group('advanced')
+        advanced_group.require_group('flmm')
+        advanced_group.require_group('glm_hmm')
+        advanced_group.require_group('moa_hmm')
         hdf5_file.require_group('combined_results')
+        hdf5_file.require_group('sessions')
 
         metadata = metadata or {}
         for key, value in metadata.items():
@@ -131,6 +137,85 @@ def append_result(hdf5_path: str | Path, result_id: str, result_record: dict) ->
             else:
                 plot_group.attrs['index_kind'] = 'numeric'
                 plot_group.create_dataset('index', data=np.asarray(numeric_index, dtype=float))
+
+        _save_advanced_analysis_groups(hdf5_file, result_id, result_record)
+
+
+def save_session_traces(hdf5_path: str | Path, session_id: str, trace_record: dict) -> None:
+    """Persist continuous session traces for one analyzed recording.
+
+    Parameters
+    ----------
+    hdf5_path : str or Path
+        Target PhotoBatch HDF5 results file.
+    session_id : str
+        Stable identifier for the session, typically ``<animal>_<date>``.
+    trace_record : dict
+        Session-level arrays or DataFrame containing the continuous trace.
+        Supported keys include ``time``, ``raw_control``, ``raw_active``,
+        ``filtered_control``, ``filtered_active``, and ``delta_f``.
+    """
+    with h5py.File(hdf5_path, 'a') as hdf5_file:
+        sessions_group = hdf5_file.require_group('sessions')
+        normalized_session_id = _normalize_string(session_id) or 'session'
+        if normalized_session_id in sessions_group:
+            del sessions_group[normalized_session_id]
+
+        session_group = sessions_group.create_group(normalized_session_id)
+        session_group.attrs['session_id'] = normalized_session_id
+
+        string_fields = ['animal_id', 'date', 'time', 'datetime', 'source_file']
+        for field in string_fields:
+            if field in trace_record:
+                session_group.attrs[field] = _normalize_string(trace_record.get(field))
+
+        if 'event_table' in trace_record:
+            event_table = trace_record.get('event_table')
+            if not isinstance(event_table, pd.DataFrame):
+                event_table = pd.DataFrame(event_table)
+            _write_dataframe_group(session_group, 'event_table', event_table)
+
+        if 'trace_table' in trace_record:
+            trace_table = trace_record.get('trace_table')
+            if not isinstance(trace_table, pd.DataFrame):
+                trace_table = pd.DataFrame(trace_table)
+            _write_dataframe_group(session_group, 'trace_table', trace_table)
+            return
+
+        for field in ('time', 'raw_control', 'raw_active', 'filtered_control', 'filtered_active', 'delta_f'):
+            if field in trace_record:
+                session_group.create_dataset(field, data=np.asarray(trace_record[field], dtype=float), compression='gzip')
+
+
+def load_session_traces(hdf5_path: str | Path, session_id: str) -> dict[str, object]:
+    """Load continuous session traces and event annotations for one session."""
+    with h5py.File(hdf5_path, 'r') as hdf5_file:
+        session_group = hdf5_file['sessions'][session_id]
+        result: dict[str, object] = {
+            'session_id': _decode_scalar(session_group.attrs.get('session_id', session_id)),
+        }
+        for field in ('animal_id', 'date', 'time', 'datetime', 'source_file'):
+            if field in session_group.attrs:
+                result[field] = _decode_scalar(session_group.attrs[field])
+
+        if 'trace_table' in session_group:
+            result['trace_table'] = _read_dataframe_group(session_group['trace_table'])
+        else:
+            for field in ('time', 'raw_control', 'raw_active', 'filtered_control', 'filtered_active', 'delta_f'):
+                if field in session_group:
+                    result[field] = np.asarray(session_group[field][...], dtype=float)
+
+        if 'event_table' in session_group:
+            result['event_table'] = _read_dataframe_group(session_group['event_table'])
+
+        return result
+
+
+def load_advanced_result(hdf5_path: str | Path, analysis_type: str, result_id: str) -> dict[str, object]:
+    """Load a serialized advanced-analysis payload for one result."""
+    with h5py.File(hdf5_path, 'r') as hdf5_file:
+        analysis_group = hdf5_file['analysis']['advanced'][analysis_type][result_id]
+        return _read_mapping_group(analysis_group)
 
 
 def write_index(hdf5_path: str | Path, records: Iterable[dict]) -> None:
@@ -321,6 +406,142 @@ def _load_plot_data_from_entry(entry_group: h5py.Group) -> pd.DataFrame:
     else:
         index = np.asarray(plot_group['index'][...], dtype=float)
     return pd.DataFrame(values, index=index, columns=columns)
+
+
+def _save_advanced_analysis_groups(hdf5_file: h5py.File, result_id: str, result_record: dict) -> None:
+    """Persist optional advanced-analysis payloads attached to a result."""
+    advanced_group = hdf5_file['analysis']['advanced']
+    for record_key, subgroup_name in (
+        ('advanced_flmm', 'flmm'),
+        ('advanced_glm_hmm', 'glm_hmm'),
+        ('advanced_moa_hmm', 'moa_hmm'),
+    ):
+        payload = result_record.get(record_key)
+        subgroup = advanced_group[subgroup_name]
+        if result_id in subgroup:
+            del subgroup[result_id]
+        if payload is None:
+            continue
+        target_group = subgroup.create_group(result_id)
+        target_group.attrs['result_id'] = result_id
+        _write_mapping_group(target_group, payload)
+
+
+def _write_mapping_group(group: h5py.Group, payload: dict) -> None:
+    """Recursively write a dictionary payload into an HDF5 group."""
+    for key, value in payload.items():
+        dataset_name = str(key)
+        if value is None:
+            group.attrs[dataset_name] = ''
+            continue
+        if isinstance(value, dict):
+            subgroup = group.create_group(dataset_name)
+            _write_mapping_group(subgroup, value)
+            continue
+        if isinstance(value, pd.DataFrame):
+            _write_dataframe_group(group, dataset_name, value)
+            continue
+        if isinstance(value, pd.Series):
+            _write_dataframe_group(group, dataset_name, value.to_frame(name=value.name or dataset_name))
+            continue
+        if isinstance(value, (list, tuple)):
+            if value and all(isinstance(item, str) for item in value):
+                group.create_dataset(dataset_name, data=np.asarray(value, dtype=object), dtype=_STRING_DTYPE)
+            else:
+                group.create_dataset(dataset_name, data=np.asarray(value), compression='gzip')
+            continue
+        if isinstance(value, np.ndarray):
+            if value.dtype.kind in {'U', 'S', 'O'}:
+                group.create_dataset(dataset_name, data=np.asarray(value, dtype=object), dtype=_STRING_DTYPE)
+            else:
+                group.create_dataset(dataset_name, data=np.asarray(value), compression='gzip')
+            continue
+        if isinstance(value, (np.integer, int, np.floating, float, np.bool_, bool)):
+            group.attrs[dataset_name] = value
+            continue
+        group.attrs[dataset_name] = str(value)
+
+
+def _write_dataframe_group(parent_group: h5py.Group, group_name: str, dataframe: pd.DataFrame) -> None:
+    """Serialize a DataFrame into a dedicated HDF5 subgroup."""
+    if group_name in parent_group:
+        del parent_group[group_name]
+    frame_group = parent_group.create_group(group_name)
+
+    frame = dataframe.copy()
+    columns = [str(column) for column in frame.columns]
+    frame_group.create_dataset('columns', data=np.asarray(columns, dtype=object), dtype=_STRING_DTYPE)
+
+    if frame.empty:
+        frame_group.create_dataset('values', data=np.empty((0, len(columns)), dtype=float))
+        frame_group.attrs['dtype_mode'] = 'numeric'
+        frame_group.attrs['index_kind'] = 'numeric'
+        frame_group.create_dataset('index', data=np.asarray([], dtype=float))
+        return
+
+    numeric_frame = frame.apply(pd.to_numeric, errors='coerce')
+    all_numeric = all(is_numeric_dtype(dtype) for dtype in frame.dtypes)
+    if all_numeric:
+        frame_group.attrs['dtype_mode'] = 'numeric'
+        frame_group.create_dataset('values', data=numeric_frame.to_numpy(dtype=float, copy=True), compression='gzip')
+    else:
+        frame_group.attrs['dtype_mode'] = 'string'
+        string_values = np.asarray(frame.fillna('').astype(str).to_numpy().tolist(), dtype=object)
+        frame_group.create_dataset(
+            'values',
+            data=string_values,
+            dtype=_STRING_DTYPE,
+        )
+
+    numeric_index = pd.to_numeric(pd.Index(frame.index), errors='coerce')
+    if np.isnan(numeric_index).any():
+        frame_group.attrs['index_kind'] = 'string'
+        frame_group.create_dataset('index', data=np.asarray([str(value) for value in frame.index], dtype=object), dtype=_STRING_DTYPE)
+    else:
+        frame_group.attrs['index_kind'] = 'numeric'
+        frame_group.create_dataset('index', data=np.asarray(numeric_index, dtype=float))
+
+
+def _read_dataframe_group(group: h5py.Group) -> pd.DataFrame:
+    """Reconstruct a DataFrame serialized with :func:`_write_dataframe_group`."""
+    columns = _read_string_dataset(group['columns']) if 'columns' in group else []
+    dtype_mode = _decode_scalar(group.attrs.get('dtype_mode', 'numeric'))
+    if 'values' in group:
+        if dtype_mode == 'string':
+            raw_values = group['values'].asstr()[...]
+            values = np.asarray(raw_values, dtype=object)
+        else:
+            values = np.asarray(group['values'][...])
+    else:
+        values = np.empty((0, len(columns)))
+
+    index_kind = _decode_scalar(group.attrs.get('index_kind', 'numeric'))
+    if 'index' in group:
+        if index_kind == 'string':
+            index = _read_string_dataset(group['index'])
+        else:
+            index = np.asarray(group['index'][...], dtype=float)
+    else:
+        index = np.arange(values.shape[0])
+
+    return pd.DataFrame(values, index=index, columns=columns)
+
+
+def _read_mapping_group(group: h5py.Group) -> dict[str, object]:
+    """Recursively reconstruct a mapping payload from an HDF5 group."""
+    payload: dict[str, object] = {key: _decode_scalar(value) for key, value in group.attrs.items()}
+    for key, item in group.items():
+        if isinstance(item, h5py.Group):
+            if 'columns' in item:
+                payload[key] = _read_dataframe_group(item)
+            else:
+                payload[key] = _read_mapping_group(item)
+        else:
+            if item.dtype.kind in {'S', 'O', 'U'}:
+                payload[key] = item.asstr()[...].tolist()
+            else:
+                payload[key] = np.asarray(item[...])
+    return payload
 
 
 def _normalize_string(value: object) -> str:

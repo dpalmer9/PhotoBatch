@@ -10,5 +10,10 @@
         "center_method": "median",
         "normalize_side": "End",
         "scale_median": true
+    },
+    "Advanced_Analysis": {
+        "run_flmm": true,
+        "run_glm_hmm": false,
+        "run_moa_hmm": false
     }
 }

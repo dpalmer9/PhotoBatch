@@ -36,6 +36,11 @@ from photobatch.Processing.Process.event import (
     _generate_event_alias,
     _create_filter_list,
 )
+from photobatch.Processing.Process.advanced_analysis import (
+    run_flmm_analysis,
+    run_glm_hmm_analysis,
+    run_moa_hmm_analysis,
+)
 from photobatch.Processing import hdf_store
 
 
@@ -44,6 +49,23 @@ from photobatch.Processing import hdf_store
 # ---------------------------------------------------------------------------
 
 logger = logging.getLogger(__name__)
+
+
+def _as_bool(value) -> bool:
+    """Return a stable boolean for JSON/config values."""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _build_session_id(animal_id, date, fallback_path: str) -> str:
+    """Return a stable HDF session key for one recording."""
+    cleaned_parts = [str(part).strip().replace('/', '-').replace('\\', '-') for part in (animal_id, date) if part]
+    if cleaned_parts:
+        return '_'.join(cleaned_parts)
+    return Path(fallback_path).stem
 
 
 # ---------------------------------------------------------------------------
@@ -460,7 +482,7 @@ def _process_single_file(args):
     of per-event result dicts.  Accepts a single tuple so it is safely
     picklable across process boundaries.
     """
-    if len(args) == 33:
+    if len(args) == 36:
         (row_dict, event_sheet_path, output_options,
          event_window_prior, event_window_follow,
          trial_start_stage, trial_end_stage,
@@ -469,8 +491,21 @@ def _process_single_file(args):
          despike, despike_window, despike_threshold, cheby_ripple,
          fit_type, baseline_detrend, robust_fit, huber_epsilon,
          arpls_lambda, arpls_max_iter, arpls_tol, arpls_eps, arpls_weight_scale,
+         run_flmm, run_glm_hmm, run_moa_hmm,
          exclusion_list, crop_start, crop_end, output_path) = args
-    else:
+    elif len(args) == 35:
+        (row_dict, event_sheet_path, output_options,
+         event_window_prior, event_window_follow,
+         trial_start_stage, trial_end_stage,
+         iti_prior_trial, center_z, center_method, scale_median, normalize_side,
+         filter_type, filter_name, filter_order, filter_cutoff,
+         despike, despike_window, despike_threshold, cheby_ripple,
+         fit_type, baseline_detrend, robust_fit, huber_epsilon,
+         arpls_lambda, arpls_max_iter, arpls_tol, arpls_eps, arpls_weight_scale,
+         run_flmm, run_glm_hmm,
+         exclusion_list, crop_start, crop_end, output_path) = args
+        run_moa_hmm = False
+    elif len(args) == 33:
         (row_dict, event_sheet_path, output_options,
          event_window_prior, event_window_follow,
          trial_start_stage, trial_end_stage,
@@ -480,7 +515,37 @@ def _process_single_file(args):
          fit_type, baseline_detrend, robust_fit, huber_epsilon,
          arpls_lambda, arpls_max_iter, arpls_tol, arpls_eps, arpls_weight_scale,
          exclusion_list, crop_start, crop_end) = args
+        run_flmm = False
+        run_glm_hmm = False
+        run_moa_hmm = False
         output_path = ''
+    elif len(args) == 32:
+        (row_dict, event_sheet_path, output_options,
+         event_window_prior, event_window_follow,
+         trial_start_stage, trial_end_stage,
+         iti_prior_trial, center_z, center_method, scale_median, normalize_side,
+         filter_type, filter_name, filter_order, filter_cutoff,
+         despike, despike_window, despike_threshold, cheby_ripple,
+         fit_type, baseline_detrend, robust_fit, huber_epsilon,
+         arpls_lambda, arpls_max_iter, arpls_tol, arpls_eps, arpls_weight_scale,
+         exclusion_list, crop_start, crop_end) = args
+        run_flmm = False
+        run_glm_hmm = False
+        run_moa_hmm = False
+        output_path = ''
+    else:
+        (row_dict, event_sheet_path, output_options,
+         event_window_prior, event_window_follow,
+         trial_start_stage, trial_end_stage,
+         iti_prior_trial, center_z, center_method, scale_median, normalize_side,
+         filter_type, filter_name, filter_order, filter_cutoff,
+         despike, despike_window, despike_threshold, cheby_ripple,
+         fit_type, baseline_detrend, robust_fit, huber_epsilon,
+         arpls_lambda, arpls_max_iter, arpls_tol, arpls_eps, arpls_weight_scale,
+         exclusion_list, crop_start, crop_end, output_path) = args
+        run_flmm = False
+        run_glm_hmm = False
+        run_moa_hmm = False
 
     row = pd.Series(row_dict)
     file_results = []
@@ -534,6 +599,8 @@ def _process_single_file(args):
     photometry_data.doric_crop(
         start_time_remove=crop_start, end_time_remove=crop_end)
 
+    raw_signal_df = photometry_data.signal_df.copy(deep=True)
+
     time_data, filtered_f0, filtered_f = photometry_data.signal_filter(
         filter_type=filter_type,
         filter_name=filter_name,
@@ -573,6 +640,12 @@ def _process_single_file(args):
         )
         return []
 
+    session_events = []
+    glm_hmm_result = None
+    moa_hmm_result = None
+    raw_session_id = '_'.join(str(part) for part in (animal_id, date, time) if part) or Path(row['abet_path']).stem
+    session_id = _build_session_id(animal_id, date, row['abet_path'])
+
     for _, event_row in event_sheet_df.iterrows():
         event_alias = _generate_event_alias(event_row)
 
@@ -607,6 +680,11 @@ def _process_single_file(args):
                 filter_event=True,
             )
 
+        if not photometry_data.abet_event_times.empty:
+            event_times = photometry_data.abet_event_times.copy()
+            event_times['event_alias'] = event_alias
+            session_events.append(event_times)
+
         photometry_data.trial_separator(
             trial_normalize=center_z,
             normalize_side=normalize_side,
@@ -639,6 +717,33 @@ def _process_single_file(args):
         except (ValueError, TypeError):
             plot_df_copy = pd.DataFrame(plot_df)
 
+        advanced_flmm_result = None
+        if run_flmm:
+            try:
+                fixed_covariates = pd.DataFrame({
+                    'trial_index': np.arange(plot_df_copy.shape[1], dtype=float),
+                    'event_name': [event_alias] * plot_df_copy.shape[1],
+                })
+                random_effects = pd.DataFrame({
+                    'animal_id': [animal_id or 'unknown_animal'] * plot_df_copy.shape[1],
+                    'session_id': [raw_session_id] * plot_df_copy.shape[1],
+                })
+                advanced_flmm_result = run_flmm_analysis(
+                    plot_df_copy,
+                    covariates=fixed_covariates,
+                    random_effects=random_effects,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "FLMM analysis failed for file=%s behavior=%s: %s",
+                    row.get('abet_path', '?'), event_alias, exc,
+                )
+                advanced_flmm_result = {
+                    'model_type': 'flmm',
+                    'status': 'failed',
+                    'error': str(exc),
+                }
+
         logger.info(
             "Processed file=%s  behavior=%s  plot_shape=%s",
             row.get('abet_path', '?'), event_alias, plot_df_copy.shape,
@@ -654,7 +759,88 @@ def _process_single_file(args):
             'date':      date,
             'time':      time,
             'datetime':  datetime_str,
+            'advanced_flmm': advanced_flmm_result,
         })
+
+    if run_glm_hmm and not photometry_data.doric_pd.empty:
+        try:
+            session_events_df = pd.concat(session_events, ignore_index=True) if session_events else pd.DataFrame()
+            glm_hmm_result = run_glm_hmm_analysis(
+                photometry_data.doric_pd['Time'].to_numpy(dtype=float, copy=False),
+                photometry_data.doric_pd['DeltaF'].to_numpy(dtype=float, copy=False),
+                session_events_df,
+            )
+        except Exception as exc:
+            logger.warning(
+                "GLM-HMM analysis failed for file=%s: %s",
+                row.get('abet_path', '?'), exc,
+            )
+            glm_hmm_result = {
+                'model_type': 'glm_hmm',
+                'status': 'failed',
+                'error': str(exc),
+            }
+
+    if run_moa_hmm and not photometry_data.doric_pd.empty:
+        try:
+            session_events_df = pd.concat(session_events, ignore_index=True) if session_events else pd.DataFrame()
+            moa_hmm_result = run_moa_hmm_analysis(
+                photometry_data.doric_pd['Time'].to_numpy(dtype=float, copy=False),
+                photometry_data.doric_pd['DeltaF'].to_numpy(dtype=float, copy=False),
+                agent_predictions=None,
+                events=session_events_df,
+            )
+        except Exception as exc:
+            logger.warning(
+                "MoA-HMM analysis failed for file=%s: %s",
+                row.get('abet_path', '?'), exc,
+            )
+            moa_hmm_result = {
+                'model_type': 'moa_hmm',
+                'status': 'failed',
+                'error': str(exc),
+            }
+
+    if glm_hmm_result is not None:
+        for result in file_results:
+            result['advanced_glm_hmm'] = glm_hmm_result
+    if moa_hmm_result is not None:
+        for result in file_results:
+            result['advanced_moa_hmm'] = moa_hmm_result
+
+    trace_table = pd.DataFrame({
+        'Time': np.asarray(time_data, dtype=float),
+        'Raw_Control': pd.to_numeric(raw_signal_df.get('Control', pd.Series(dtype=float)), errors='coerce').reindex(range(len(time_data))).to_numpy(dtype=float, copy=False)
+        if len(raw_signal_df) == len(time_data)
+        else np.interp(np.asarray(time_data, dtype=float), raw_signal_df['Time'].to_numpy(dtype=float, copy=False), pd.to_numeric(raw_signal_df['Control'], errors='coerce').to_numpy(dtype=float, copy=False)),
+        'Raw_Active': pd.to_numeric(raw_signal_df.get('Active', pd.Series(dtype=float)), errors='coerce').reindex(range(len(time_data))).to_numpy(dtype=float, copy=False)
+        if len(raw_signal_df) == len(time_data)
+        else np.interp(np.asarray(time_data, dtype=float), raw_signal_df['Time'].to_numpy(dtype=float, copy=False), pd.to_numeric(raw_signal_df['Active'], errors='coerce').to_numpy(dtype=float, copy=False)),
+        'Filtered_Control': np.asarray(filtered_f0, dtype=float),
+        'Filtered_Active': np.asarray(filtered_f, dtype=float),
+        'DeltaF': photometry_data.doric_pd['DeltaF'].to_numpy(dtype=float, copy=False),
+    })
+    event_table = pd.concat(session_events, ignore_index=True) if session_events else pd.DataFrame(columns=['time', 'event_type'])
+    if not event_table.empty:
+        event_table = event_table.copy()
+        if 'Start_Time' in event_table.columns and 'time' not in event_table.columns:
+            event_table['time'] = pd.to_numeric(event_table['Start_Time'], errors='coerce')
+        if 'event_alias' in event_table.columns and 'event_type' not in event_table.columns:
+            event_table['event_type'] = event_table['event_alias'].astype(str)
+
+    session_trace_record = {
+        'session_id': session_id,
+        'animal_id': animal_id,
+        'date': date,
+        'time': time,
+        'datetime': datetime_str,
+        'source_file': os.path.basename(row['abet_path']),
+        'trace_table': trace_table,
+        'event_table': event_table,
+    }
+
+    for result in file_results:
+        result['session_trace'] = session_trace_record
 
     return file_results
 
@@ -664,7 +850,7 @@ def _process_single_file(args):
 # ---------------------------------------------------------------------------
 
 def process_files(file_sheet_path, event_sheet_path, output_options,
-                  config, num_workers=1):
+                  config, num_workers=1, progress_callback=None):
     """Process all file pairs defined in *file_sheet_path* and persist to HDF5.
 
     Parameters
@@ -720,6 +906,10 @@ def process_files(file_sheet_path, event_sheet_path, output_options,
     arpls_tol         = float(config['Signal_Fitting'].get('arpls_tol', 1e-6))
     arpls_eps         = float(config['Signal_Fitting'].get('arpls_eps', 1e-8))
     arpls_weight_scale = float(config['Signal_Fitting'].get('arpls_weight_scale', 2.0))
+    advanced_analysis = config['Advanced_Analysis'] if 'Advanced_Analysis' in config else {}
+    run_flmm = _as_bool(advanced_analysis.get('run_flmm', False))
+    run_glm_hmm = _as_bool(advanced_analysis.get('run_glm_hmm', False))
+    run_moa_hmm = _as_bool(advanced_analysis.get('run_moa_hmm', False))
 
     exclusion_list = [i.strip() for i in
                       (config['ABET'].get('exclusion_list') or '').split(',')
@@ -739,6 +929,7 @@ def process_files(file_sheet_path, event_sheet_path, output_options,
             despike, despike_window, despike_threshold, cheby_ripple,
             fit_type, baseline_detrend, robust_fit, huber_epsilon,
             arpls_lambda, arpls_max_iter, arpls_tol, arpls_eps, arpls_weight_scale,
+            run_flmm, run_glm_hmm, run_moa_hmm,
             exclusion_list, crop_start, crop_end, output_path,
         )
         for _, row in file_pair_df.iterrows()
@@ -763,6 +954,7 @@ def process_files(file_sheet_path, event_sheet_path, output_options,
 
     index_records  = []
     result_counter = 0
+    saved_sessions = set()
 
     def persist_result_batch(result_batch):
         nonlocal result_counter
@@ -771,6 +963,12 @@ def process_files(file_sheet_path, event_sheet_path, output_options,
             result_id = f"result_{result_counter:06d}"
             result['result_id'] = result_id
             hdf_store.append_result(hdf5_path, result_id, result)
+            session_trace = result.get('session_trace')
+            if isinstance(session_trace, dict):
+                session_id = str(session_trace.get('session_id') or '')
+                if session_id and session_id not in saved_sessions:
+                    hdf_store.save_session_traces(hdf5_path, session_id, session_trace)
+                    saved_sessions.add(session_id)
             index_records.append({
                 'result_id': result_id,
                 'file':      result.get('file'),
@@ -783,6 +981,8 @@ def process_files(file_sheet_path, event_sheet_path, output_options,
                 'max_peak':  result.get('max_peak'),
                 'auc':       result.get('auc'),
             })
+
+    completed_jobs = 0
 
     if num_workers > 1:
         try:
@@ -797,6 +997,13 @@ def process_files(file_sheet_path, event_sheet_path, output_options,
                             "Worker error for file pair %d: %s",
                             futures[future], exc, exc_info=True,
                         )
+                    finally:
+                        completed_jobs += 1
+                        if progress_callback:
+                            try:
+                                progress_callback(completed_jobs, len(args_list))
+                            except Exception as cb_exc:
+                                logger.warning("Progress callback failed: %s", cb_exc)
         except Exception as exc:
             logger.error(
                 "ProcessPoolExecutor failed (%s) — falling back to sequential processing.",
@@ -807,12 +1014,26 @@ def process_files(file_sheet_path, event_sheet_path, output_options,
                     persist_result_batch(_process_single_file(args))
                 except Exception as fallback_exc:
                     logger.error("Sequential fallback error: %s", fallback_exc, exc_info=True)
+                finally:
+                    completed_jobs += 1
+                    if progress_callback:
+                        try:
+                            progress_callback(completed_jobs, len(args_list))
+                        except Exception as cb_exc:
+                            logger.warning("Progress callback failed: %s", cb_exc)
     else:
         for args in args_list:
             try:
                 persist_result_batch(_process_single_file(args))
             except Exception as exc:
                 logger.error("Processing error: %s", exc, exc_info=True)
+            finally:
+                completed_jobs += 1
+                if progress_callback:
+                    try:
+                        progress_callback(completed_jobs, len(args_list))
+                    except Exception as cb_exc:
+                        logger.warning("Progress callback failed: %s", cb_exc)
 
     # ------------------------------------------------------------------
     # Assign session numbers per animal based on chronological order
