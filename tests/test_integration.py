@@ -350,3 +350,56 @@ def test_process_single_file_skips_when_synchronization_fails(monkeypatch, caplo
 
     assert result == []
     assert "Time synchronization failed for file pair" in caplog.text
+
+
+def test_process_files_with_progress_callback(tmp_path, monkeypatch):
+    abet_path = tmp_path / "session_abet.csv"
+    doric_path = tmp_path / "session_doric.csv"
+    event_sheet_path = tmp_path / "event_sheet.csv"
+    file_sheet_path = tmp_path / "file_sheet.csv"
+    hdf5_path = tmp_path / "results_progress.hdf5"
+
+    _write_abet_csv(abet_path)
+    _write_doric_csv(doric_path)
+    _write_event_sheet(event_sheet_path)
+    _write_file_sheet(file_sheet_path, abet_path, doric_path)
+
+    repo_root = Path(__file__).resolve().parents[1]
+    config = ConfigManager(repo_root / "photobatch")
+    config["Event_Window"]["event_prior"] = 0.5
+    config["Event_Window"]["event_follow"] = 0.5
+    config["Normalization"]["center_z"] = "whole"
+    config["Normalization"]["center_method"] = "mean"
+    config["Normalization"]["normalize_side"] = "Left"
+    config["Normalization"]["iti_prior_trial"] = 0.5
+    config["Signal_Filter"]["filter_type"] = "lowpass"
+    config["Signal_Filter"]["filter_name"] = "butterworth"
+    config["Signal_Filter"]["filter_order"] = 2
+    config["Signal_Filter"]["filter_cutoff"] = 2
+    config["Signal_Utilities"]["despike"] = False
+    config["Signal_Utilities"]["despike_window"] = 11
+    config["Signal_Fitting"]["fit_type"] = "linear"
+    config["Signal_Fitting"]["baseline_detrend"] = None
+    config["Signal_Fitting"]["robust_fit"] = False
+    config["ABET"]["trial_start_stage"] = "Display Image"
+    config["ABET"]["trial_end_stage"] = "Reward Collected Start ITI"
+    config["ABET"]["exclusion_list"] = ""
+
+    monkeypatch.setattr(hdf_store, "get_default_results_path", lambda: hdf5_path)
+    config["Filepath"]["output_path"] = str(tmp_path)
+
+    progress_calls = []
+    def progress_cb(completed, total):
+        progress_calls.append((completed, total))
+
+    process_files(
+        file_sheet_path=str(file_sheet_path),
+        event_sheet_path=str(event_sheet_path),
+        output_options=[1],
+        config=config,
+        num_workers=1,
+        progress_callback=progress_cb
+    )
+
+    assert len(progress_calls) == 1
+    assert progress_calls[0] == (1, 1)
