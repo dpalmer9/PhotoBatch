@@ -1367,7 +1367,8 @@ class FiberPhotometryApp(QMainWindow):
                 else:
                     checkbox.setChecked(str(value).lower() in ('true', '1'))
                 label_text = advanced_labels.get(key, key.replace("_", " "))
-                advanced_group_layout.addRow(label_text, checkbox)
+                label_qt = QLabel(label_text)
+                advanced_group_layout.addRow(label_qt, checkbox)
                 setattr(self, widget_attr_name, checkbox)
             advanced_group_box.setLayout(advanced_group_layout)
             layout.addWidget(advanced_group_box)
@@ -1378,13 +1379,14 @@ class FiberPhotometryApp(QMainWindow):
             for key in self.config[section_name]:
                 value = self.config[section_name][key]
                 display_key = key.replace("_", " ")
+                label_qt = QLabel(display_key)
                 widget_attr_name = f"{section_name}_{key}_checkbox"
                 checkbox = QCheckBox()
                 if isinstance(value, bool):
                     checkbox.setChecked(value)
                 else:
                     checkbox.setChecked(str(value).lower() in ('true', '1'))
-                output_group_layout.addRow(display_key, checkbox)
+                output_group_layout.addRow(label_qt, checkbox)
                 setattr(self, widget_attr_name, checkbox)
             output_group_box.setLayout(output_group_layout)
             layout.addWidget(output_group_box)
