@@ -850,7 +850,7 @@ def _process_single_file(args):
 # ---------------------------------------------------------------------------
 
 def process_files(file_sheet_path, event_sheet_path, output_options,
-                  config, num_workers=1):
+                  config, num_workers=1, progress_callback=None):
     """Process all file pairs defined in *file_sheet_path* and persist to HDF5.
 
     Parameters
@@ -982,6 +982,8 @@ def process_files(file_sheet_path, event_sheet_path, output_options,
                 'auc':       result.get('auc'),
             })
 
+    completed_jobs = 0
+
     if num_workers > 1:
         try:
             with ProcessPoolExecutor(max_workers=num_workers) as executor:
@@ -995,6 +997,13 @@ def process_files(file_sheet_path, event_sheet_path, output_options,
                             "Worker error for file pair %d: %s",
                             futures[future], exc, exc_info=True,
                         )
+                    finally:
+                        completed_jobs += 1
+                        if progress_callback:
+                            try:
+                                progress_callback(completed_jobs, len(args_list))
+                            except Exception as cb_exc:
+                                logger.warning("Progress callback failed: %s", cb_exc)
         except Exception as exc:
             logger.error(
                 "ProcessPoolExecutor failed (%s) — falling back to sequential processing.",
@@ -1005,12 +1014,26 @@ def process_files(file_sheet_path, event_sheet_path, output_options,
                     persist_result_batch(_process_single_file(args))
                 except Exception as fallback_exc:
                     logger.error("Sequential fallback error: %s", fallback_exc, exc_info=True)
+                finally:
+                    completed_jobs += 1
+                    if progress_callback:
+                        try:
+                            progress_callback(completed_jobs, len(args_list))
+                        except Exception as cb_exc:
+                            logger.warning("Progress callback failed: %s", cb_exc)
     else:
         for args in args_list:
             try:
                 persist_result_batch(_process_single_file(args))
             except Exception as exc:
                 logger.error("Processing error: %s", exc, exc_info=True)
+            finally:
+                completed_jobs += 1
+                if progress_callback:
+                    try:
+                        progress_callback(completed_jobs, len(args_list))
+                    except Exception as cb_exc:
+                        logger.warning("Progress callback failed: %s", cb_exc)
 
     # ------------------------------------------------------------------
     # Assign session numbers per animal based on chronological order
