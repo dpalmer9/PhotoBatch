@@ -141,7 +141,7 @@ def _build_event_design_matrix(session_time: np.ndarray, events: Any) -> tuple[n
     dt = float(np.median(positive_diffs[positive_diffs > 0])) if np.any(positive_diffs > 0) else 1.0
     kernel_window = max(5, int(np.ceil(5.0 / max(dt, 1e-6))))
     kernel_time = np.arange(kernel_window, dtype=float) * dt
-    tau = max(1.5 * dt, dt * 5.0)
+    tau = 1.0  # Fixed physical GCaMP sensor decay time constant in seconds
     kernel = np.exp(-kernel_time / tau)
     kernel /= max(kernel.sum(), np.finfo(float).eps)
 
@@ -154,10 +154,7 @@ def _build_event_design_matrix(session_time: np.ndarray, events: Any) -> tuple[n
         if event_indices.size == 0:
             continue
         np.add.at(impulse, event_indices, 1.0)
-        convolved = np.convolve(impulse, kernel, mode='same')
-        if convolved.shape[0] != len(time):
-            start = max((convolved.shape[0] - len(time)) // 2, 0)
-            convolved = convolved[start:start + len(time)]
+        convolved = np.convolve(impulse, kernel, mode='full')[:len(time)]
         columns.append(convolved)
         names.append(str(event_name))
 
