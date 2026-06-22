@@ -635,8 +635,10 @@ def run_glm_hmm_analysis(session_time, session_signal, events, n_states=3):
     if design_matrix.size:
         for column_index, event_name in enumerate(event_names):
             feature_frame[str(event_name)] = design_matrix[:, column_index]
-    feature_frame['signal_trend'] = gaussian_filter1d(signal_values, sigma=max(len(signal_values) / 120.0, 1.0), mode='nearest')
-    feature_frame['signal_velocity'] = np.gradient(signal_values, time, edge_order=1) if len(time) > 1 else np.zeros_like(signal_values)
+    if len(time) > 1:
+        feature_frame['time_drift'] = (time - time[0]) / (time[-1] - time[0])
+    else:
+        feature_frame['time_drift'] = 0.0
     encoded_features = _encode_feature_frame(feature_frame, intercept=True)
 
     model = GaussianGLMHMM(n_states=int(n_states))
@@ -669,7 +671,6 @@ def run_glm_hmm_analysis(session_time, session_signal, events, n_states=3):
 def _build_default_agent_predictions(session_time, session_signal, events) -> pd.DataFrame:
     """Build a tailored set of continuous expert signals for MoA-HMM."""
     time = np.asarray(session_time, dtype=float)
-    signal = np.asarray(session_signal, dtype=float)
     design_matrix, event_names = _build_event_design_matrix(time, events)
     agent_frame = pd.DataFrame(index=np.arange(len(time)))
     if design_matrix.size:
@@ -679,12 +680,6 @@ def _build_default_agent_predictions(session_time, session_signal, events) -> pd
     else:
         agent_frame['event_drive'] = np.zeros(len(time), dtype=float)
 
-    signal_series = pd.Series(signal, dtype=float).interpolate(limit_direction='both').ffill().bfill()
-    signal_values = signal_series.to_numpy(dtype=float)
-    agent_frame['slow_signal'] = gaussian_filter1d(signal_values, sigma=max(len(signal_values) / 90.0, 1.0), mode='nearest')
-    agent_frame['fast_signal'] = gaussian_filter1d(signal_values, sigma=1.5, mode='nearest')
-    agent_frame['signal_momentum'] = np.gradient(signal_values, time, edge_order=1) if len(time) > 1 else np.zeros_like(signal_values)
-    agent_frame['signal_accumulator'] = np.cumsum(np.maximum(signal_values - np.nanmedian(signal_values), 0.0))
     return agent_frame
 
 
