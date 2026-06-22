@@ -205,8 +205,8 @@ def _encode_feature_frame(frame: pd.DataFrame, intercept: bool = True) -> pd.Dat
     for column in frame.columns:
         numeric = pd.to_numeric(frame[column], errors='coerce')
         if numeric.isna().all():
-            categories = pd.Categorical(frame[column].astype(str))
-            encoded[column] = categories.codes.astype(float)
+            dummies = pd.get_dummies(frame[column].astype(str), prefix=column, drop_first=intercept, dtype=float)
+            encoded = pd.concat([encoded, dummies], axis=1)
         else:
             mean_value = float(numeric.mean()) if numeric.notna().any() else 0.0
             encoded[column] = numeric.fillna(mean_value).astype(float)
@@ -216,7 +216,17 @@ def _encode_feature_frame(frame: pd.DataFrame, intercept: bool = True) -> pd.Dat
 def _build_group_labels(random_frame: pd.DataFrame) -> tuple[np.ndarray, pd.DataFrame]:
     """Build grouping labels and numeric random-effect covariates."""
     labels = random_frame.astype(str).agg('|'.join, axis=1).to_numpy(dtype=object)
-    encoded = _encode_feature_frame(random_frame, intercept=False) if random_frame.shape[1] > 1 else pd.DataFrame(index=random_frame.index)
+    
+    numeric_cols = []
+    for col in random_frame.columns:
+        numeric = pd.to_numeric(random_frame[col], errors='coerce')
+        if not numeric.isna().all():
+            numeric_cols.append(col)
+            
+    if numeric_cols and random_frame.shape[1] > 1:
+        encoded = _encode_feature_frame(random_frame[numeric_cols], intercept=False)
+    else:
+        encoded = pd.DataFrame(index=random_frame.index)
     return labels, encoded
 
 
