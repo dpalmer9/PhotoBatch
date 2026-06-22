@@ -52,8 +52,6 @@ def _coerce_trial_matrix(plot_data: pd.DataFrame | np.ndarray | list[list[float]
         else:
             filled[index] = (
                 series.interpolate(limit_direction='both')
-                .ffill()
-                .bfill()
                 .to_numpy(dtype=float)
             )
     return filled, time_grid, trial_names
@@ -169,7 +167,7 @@ def _smooth_vector(values: np.ndarray) -> np.ndarray:
     if values.size < 5:
         return values.copy()
 
-    series = pd.Series(values, dtype=float).interpolate(limit_direction='both').ffill().bfill()
+    series = pd.Series(values, dtype=float).interpolate(limit_direction='both')
     filled = series.to_numpy(dtype=float)
     preferred_window = 9
     window = min(preferred_window, values.size if values.size % 2 else values.size - 1)
@@ -181,8 +179,7 @@ def _smooth_vector(values: np.ndarray) -> np.ndarray:
         smoothed = savgol_filter(filled, window_length=window, polyorder=min(3, window - 2), mode='interp')
     else:
         smoothed = filled
-    sigma = max(window / 6.0, 1.0)
-    return gaussian_filter1d(smoothed, sigma=sigma, mode='nearest')
+    return smoothed
 
 
 def _smooth_dataframe(frame: pd.DataFrame) -> pd.DataFrame:
